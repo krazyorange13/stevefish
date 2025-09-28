@@ -28,6 +28,7 @@ class ChessGame:
             print(move)
             print(self.board)
             print("\n")
+            input("Press Enter to continue...")
         print("result:", self.board.result())
 
 
