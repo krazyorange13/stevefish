@@ -16,6 +16,7 @@ class Agent:
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.MSELoss()
         self.epsilon = 0.1
+        self.discount = 0.9
 
     def board_to_tensor(self, board):
         board_tensor = torch.zeros(64, dtype=torch.float32)
@@ -43,7 +44,7 @@ class Agent:
 
         return board_tensor
     
-    def get_best_move(self):
+    def get_best_move_and_val(self):
         # get legal moves
         legal_moves = self.board.legal_moves
         if not legal_moves:
@@ -73,7 +74,8 @@ class Agent:
             # undo move
             self.board.pop()
 
-        return best_move
+        return best_move, best_value
+    
 
     
     def train_step(self, move):
@@ -90,8 +92,9 @@ class Agent:
         reward = self.getReward(old_board_state, new_board_state, move)
         
         # the old prediction for the previous state should be updated based on reward
+        # Q-learning update algorithm: Q(s, a) = Q(s, a) + alpha * (reward + discount * max_next_Q - Q(s, a))
         predicted_q = self.model.forward(old_board_state)
-        target_q = reward
+        target_q = reward + self.discount * self.get_best_move_and_val()[1]
 
         # Update model
         self.optimizer.zero_grad()
