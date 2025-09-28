@@ -21,7 +21,6 @@ pip install torchvision
 pip install chess
 ```
 ## run
-```bash
+```
 python main.py
 ```
-the first time you run the program it will have to download the database, but it's pretty small so it shouldn't take too long. unlike your mom, who is currently estimated to outweigh the entirety of the internet itself.
