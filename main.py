@@ -9,6 +9,10 @@ class ChessGame:
         self.agent1 = Agent(color=chess.WHITE)
         self.agent2 = Agent(color=chess.BLACK)
 
+    def sync_boards(self):
+        self.agent1.board = self.board.copy()
+        self.agent2.board = self.board.copy()
+
     def run(self):
         while not (
             self.board.is_checkmate()
@@ -30,8 +34,7 @@ class ChessGame:
             # update main board
             self.board.push(agent1_move)
             # update agents boards
-            self.agent1.board.push(agent1_move)
-            self.agent2.board.push(agent1_move)
+            self.sync_boards()
 
             # check if game over after agent 1 move
             if self.board.is_game_over():
@@ -39,13 +42,11 @@ class ChessGame:
             
             # agent 2 move
             agent2_move = self.agent2.get_best_move_and_val()[0]
-            self.board.push(agent2_move)
             
             # update main board
-            self.board.push(agent1_move)
+            self.board.push(agent2_move)
             # update agents boards
-            self.agent1.board.push(agent2_move)
-            self.agent2.board.push(agent2_move)
+            self.sync_boards()
 
             print(self.board)
             print("\n")

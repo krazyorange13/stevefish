@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import random
 
-class Agent:
+class Agent():
     def __init__(self, color=chess.WHITE):
         self.board = chess.Board()
         self.model = nn.Sequential(
@@ -49,11 +49,11 @@ class Agent:
         # get legal moves
         legal_moves = list(self.board.legal_moves)
         if not legal_moves:
-            return None
+            return None, 0.0
         
         # epsilon-greedy
         if random.random() < self.epsilon:
-            return random.choice(legal_moves)
+            return random.choice(legal_moves), 0.0
         
         # get max q val for each legal move
         best_move = None
@@ -61,7 +61,7 @@ class Agent:
         for move in legal_moves:
             # apply move temporarily
             self.board.push(move)
-            board_tensor = self.board_to_tensor(self.board)
+            board_tensor = self.board_to_tensor(self.board).unsqueeze(0)
 
             # foward pass to get q value for each legal move
             with torch.no_grad():
@@ -82,21 +82,27 @@ class Agent:
     def train_step(self, move, value):
         # get tensor of old board
         old_board = self.board
-        old_board_state = self.board_to_tensor(self.board)
+        old_board_state = self.board_to_tensor(self.board).unsqueeze(0)
 
         # make move
         self.board.push(move)
-
-        # get tensor of new board
-        new_board_state = self.board_to_tensor(self.board)
 
         # calculate reward
         reward = self.getReward(old_board, self.board, move)
         
         # the old prediction for the previous state should be updated based on reward
         # Q-learning update algorithm: Q(s, a) = Q(s, a) + alpha * (reward + discount * max_next_Q - Q(s, a))
+        
+        
+        with torch.no_grad():
+            if self.board.is_game_over():
+                target_q = reward
+            else:
+                next_max_q = self.get_best_move_and_val()[1]
+                target_q = reward + self.discount * next_max_q
+
         predicted_q = self.model.forward(old_board_state)
-        target_q = reward + self.discount * value
+        target_q = torch.tensor([[target_q]], dtype=torch.float32)
 
         # Update model
         self.optimizer.zero_grad()
