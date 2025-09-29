@@ -1,3 +1,5 @@
 .venv
 data/
 urmom.pth
+
+__pycache__/
