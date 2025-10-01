@@ -3,16 +3,14 @@ import torch
 import torch.nn as nn
 import random
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+print(f"Using device: {device}")
+
 class Agent():
     def __init__(self, color=chess.WHITE):
         self.board = chess.Board()
-        self.model = nn.Sequential(
-            nn.Linear(64, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1)
-        )
+        self.model = Model().to(device)
         self.color = color
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.MSELoss()
@@ -20,7 +18,7 @@ class Agent():
         self.discount = 0.9
 
     def board_to_tensor(self, board):
-        board_tensor = torch.zeros(64, dtype=torch.float32)
+        board_tensor = torch.zeros(64, dtype=torch.float32).to(device)
 
         piece_to_value = {
             None: 0,
@@ -37,7 +35,7 @@ class Agent():
             if piece is not None:
                 value = piece_to_value[piece.piece_type]
 
-                # Negative for black pieces (or enemy pieces later on)
+                # negative for enemy pieces
                 if piece.color != self.color:
                     value = -value
                 
@@ -93,16 +91,17 @@ class Agent():
         # the old prediction for the previous state should be updated based on reward
         # Q-learning update algorithm: Q(s, a) = Q(s, a) + alpha * (reward + discount * max_next_Q - Q(s, a))
         
-        
         with torch.no_grad():
             if self.board.is_game_over():
                 target_q = reward
             else:
-                next_max_q = self.get_best_move_and_val()[1]
+                # next_max_q = self.get_best_move_and_val()[1]
+                next_board_state = self.board_to_tensor(self.board).unsqueeze(0)
+                next_max_q = self.model(next_board_state).item()
                 target_q = reward + self.discount * next_max_q
 
         predicted_q = self.model.forward(old_board_state)
-        target_q = torch.tensor([[target_q]], dtype=torch.float32)
+        target_q = torch.tensor([[target_q]], dtype=torch.float32, device=device)
 
         # Update model
         self.optimizer.zero_grad()
@@ -110,16 +109,134 @@ class Agent():
         loss.backward()
         self.optimizer.step()
 
-        return move
-
     def getReward(self, old_state, new_state, move):
         reward = 0
 
         if (new_state.is_checkmate()):
-            reward += 100
+            if new_state.turn != self.color:
+                reward += 200 # goood boyyyyy
+            else:
+                reward -= 200
         elif (new_state.is_stalemate() or new_state.is_insufficient_material()
                 or new_state.can_claim_draw() or new_state.can_claim_fifty_moves()
                 or new_state.can_claim_threefold_repetition()):
-                reward += 10
+                reward -= 10
+
+        # Reward for capturing pieces
+        captured_piece = old_state.piece_at(move.to_square)
+        if captured_piece is not None:
+            piece_value = {
+                chess.PAWN: 1,
+                chess.ROOK: 5,
+                chess.KNIGHT: 3,
+                chess.BISHOP: 3,
+                chess.QUEEN: 9,
+                chess.KING: 0
+            }.get(captured_piece.piece_type, 0)
+            reward += piece_value
+        
+        # smol penalty for each move to encourage faster wins (or losses)
+        reward -= 0.1
 
         return reward
+    
+    def set_training_mode(self, training=True):
+        if training:
+            self.model.train()
+            self.epsilon = 0.1
+        else:
+            self.model.eval()
+            self.epsilon = 0.0
+    
+    def play_test_game(self, opponent_agent=None):
+        print("\n" + "="*40)
+        print("STARTING TEST GAME")
+        print("="*40)
+        
+        # save current training state
+        original_board = self.board.copy()
+        original_epsilon = self.epsilon
+        
+        # create new board and disable epsilon
+        test_board = chess.Board()
+        self.board = test_board
+        self.epsilon = 0.0
+        
+        if opponent_agent is None:
+            opponent_agent = Agent(color=chess.BLACK)
+        
+        # save opponent state and set up for test
+        opponent_original_board = opponent_agent.board.copy()
+        opponent_original_epsilon = opponent_agent.epsilon
+        opponent_agent.board = test_board
+        opponent_agent.epsilon = 0.0
+        
+        move_count = 0
+        
+        try:
+            print("Initial board:")
+            print(test_board)
+            print()
+            
+            while not test_board.is_game_over():
+                move_count += 1
+                
+                if test_board.turn == chess.WHITE:
+                    move, value = self.get_best_move_and_val()
+                    player = "White"
+                else:
+                    move, value = opponent_agent.get_best_move_and_val()
+                    player = "Black"
+                
+                if move:
+                    test_board.push(move)
+                    print(f"Move {move_count}: {player} plays {move} (value: {value:.3f})")
+                else:
+                    break
+            
+            print(f"\nFinal board after {move_count} moves:")
+            print(test_board)
+            
+            # print result
+            if test_board.is_checkmate():
+                winner = "White" if test_board.turn == chess.BLACK else "Black"
+                print(f"\nResult: {winner} wins by checkmate!")
+            elif test_board.is_stalemate():
+                print("\nResult: Draw by stalemate!")
+            elif test_board.is_insufficient_material():
+                print("\nResult: Draw by insufficient material!")
+            else:
+                print("\nResult: Draw! For some random reason!")
+                
+        finally:
+            # restore everything
+            self.board = original_board
+            self.epsilon = original_epsilon
+            opponent_agent.board = opponent_original_board
+            opponent_agent.epsilon = opponent_original_epsilon
+            
+        print("="*40)
+        print("TEST GAME COMPLETE - Resuming training...")
+        print("="*40 + "\n")
+    
+
+class Model(nn.Module):
+    def __init__(self):
+        super(Model, self).__init__()
+        self.fc1 = nn.Linear(64, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, 1)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(p=0.2)
+
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = self.relu(self.fc3(x))
+        x = self.dropout(x)
+        x = self.fc4(x)
+        return x
+    
