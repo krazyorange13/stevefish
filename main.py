@@ -86,7 +86,7 @@ class ChessGame:
     def run(self):
         signal.signal(signal.SIGINT, self.signal_handler)
 
-        num_games = 100
+        num_games = 200
         
         print("Training started! Press Ctrl+C anytime to pause and test the model.")
         print(f"Training for {num_games} games...")
