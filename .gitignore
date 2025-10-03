@@ -4,3 +4,5 @@ urmom.pth
 
 __pycache__/
 chess_ai_env/
+
+*.pth

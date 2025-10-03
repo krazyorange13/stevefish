@@ -10,7 +10,13 @@ class ChessGame:
         self.board = chess.Board()
         self.agent1 = Agent(color=chess.WHITE)
         self.agent2 = Agent(color=chess.BLACK)
+        self.agent2.epsilon = 0.0
         self.current_game = 0
+        self.game_reward_agent1 = 0
+        self.game_reward_agent2 = 0
+        self.copy_frequency = 50
+        self.opponent_reward = 0
+        self.pending_agent1_training = None
 
     def signal_handler(self, sig, frame):
         print("\n" + "="*50)
@@ -37,6 +43,11 @@ class ChessGame:
                 
             elif choice == '3':
                 self.save_and_exit()
+
+            elif choice.lower() == 'stfu':
+                # exit without saving
+                print("No u")
+                sys.exit(0)
                 
             else:
                 print("Invalid choice. Please enter 1, 2, or 3 or STFU.")
@@ -47,12 +58,18 @@ class ChessGame:
         print("Exiting...")
         sys.exit(0)
 
-
     def sync_boards(self):
         self.agent1.board = self.board.copy()
         self.agent2.board = self.board.copy()
 
+    def copy_agent1_to_agent2(self):
+        self.agent2.model.load_state_dict(self.agent1.model.state_dict())
+        print("Copied Agent 1's model to Agent 2.")
+
     def run_one_game(self, show_board=False):
+        game_reward_agent1 = 0
+        game_reward_agent2 = 0
+        self.pending_agent1_training = None
         while not (self.board.is_game_over()):
 
             self.sync_boards()
@@ -62,31 +79,83 @@ class ChessGame:
                 move, val = self.agent1.get_best_move_and_val()
                 if move:
                     # train agent1
-                    self.agent1.train_step(move, val)
+                    # game_reward_agent1 += self.agent1.train_step(move, val, self.opponent_reward+25)
+                    # self.board.push(move)
+
+                    # store the current state for training after agent2's response
+                    old_board = self.board.copy()
+                    # old_board_state = self.agent1.board_to_tensor(self.board)
+
                     self.board.push(move)
+
+                    reward = self.agent1.getReward(old_board, self.board, move)
+
+                    # store the move for training after agent2 responds
+                    self.pending_agent1_training = {
+                        'move': move,
+                        'old_board': old_board,
+                        'new_board': self.board.copy(),
+                        'value': val,
+                        'reward': reward
+                    }
                 else:
                     break
+
+                self.opponent_reward = 0
             else:
             
                 # agent 2 move
                 move, val = self.agent2.get_best_move_and_val()
                 if move:
-                    # train agent2
-                    self.agent2.train_step(move, val)
+                    # do not train agent2
+                    old_state = self.board.copy()
                     self.board.push(move)
+                    self.opponent_reward = self.agent2.getReward(old_state, self.board, move)
+
+                    # this only works bc agent2 isnt trained on this reward. this reward uses agent2's current move and agent1's previous move
+                    game_reward_agent2 += self.opponent_reward - self.pending_agent1_training['reward'] if self.pending_agent1_training else 0
+
+                    if self.pending_agent1_training:
+                        total_reward = self.agent1.train_step(
+                            self.pending_agent1_training['move'],
+                            self.pending_agent1_training['old_board'],
+                            self.pending_agent1_training['new_board'],
+                            self.pending_agent1_training['reward'],
+                            self.pending_agent1_training['value'],
+                            opponent_reward=self.opponent_reward + 25
+                        )
+                        game_reward_agent1 += total_reward
+
+                    self.pending_agent1_training = None
                 else:
                     break
 
             if (show_board):
                 print(self.board)
+                print(f"Move {self.board.fullmove_number}: {'White' if self.board.turn == chess.BLACK else 'Black'} plays {move} (value: {val:.3f})")
                 print("\n")
                 input("Press Enter to continue...")
+
+        # handle final agent1 training if game ended before agent2 could respond
+        if self.pending_agent1_training:
+            actual_training_reward = self.agent1.train_step(
+                self.pending_agent1_training['move'],
+                self.pending_agent1_training['old_board'],
+                self.pending_agent1_training['new_board'],
+                self.pending_agent1_training['reward'],
+                self.pending_agent1_training['value'],
+                opponent_reward=0
+            )
+            game_reward_agent1 += actual_training_reward
+        
         print("result:", self.board.result())
+        print("Game reward Agent 1 (White):", game_reward_agent1)
+        print("Game reward Agent 2 (Black):", game_reward_agent2)
 
     def run(self):
         signal.signal(signal.SIGINT, self.signal_handler)
 
-        num_games = 200
+        num_games = 3000
         
         print("Training started! Press Ctrl+C anytime to pause and test the model.")
         print(f"Training for {num_games} games...")
@@ -95,8 +164,13 @@ class ChessGame:
             self.current_game = i + 1
             print(f"Starting game {i+1}/{num_games}")
 
+            # copy agent1 to agent2 every copy_frequency games
+            if i % self.copy_frequency == 0:
+                self.copy_agent1_to_agent2()
+
             if (i == num_games - 1):
                 self.run_one_game(show_board=True)
+                self.save_and_exit()
             else:
                 self.run_one_game()
                 self.board.reset()
