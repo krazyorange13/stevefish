@@ -12,15 +12,29 @@ class Agent():
         self.board = chess.Board()
         self.model = Model().to(device)
         self.color = color
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.002)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0005, weight_decay=0.01, betas=(0.9, 0.999))
         self.criterion = nn.MSELoss()
-        self.epsilon = 0.9
-        self.epsilon_decay = 0.99
-        self.epsilon_min = 0.01
+        self.epsilon = 1.0
+        self.epsilon_decay = 0.995
+        self.epsilon_min = 0.05
         self.discount = 0.9
 
-    def board_to_tensor(self, board):
-        board_tensor = torch.zeros(64, dtype=torch.float32).to(device)
+    def printBoard(self, board):
+        board = board.unicode()
+
+        # remove circles in board representation with dots
+        board = board.replace('⭘', '.')
+
+        print(board)
+
+    def board_to_tensor(self, board, color=None):
+        if color is None:
+            color = self.color
+
+        if self.color == chess.BLACK:
+            board = board.mirror()
+
+        board_tensor = torch.zeros(128, dtype=torch.float32).to(device)
 
         piece_to_value = {
             None: 0,
@@ -32,6 +46,7 @@ class Agent():
             chess.KING: 6
         }
 
+        # first 64 values for board
         for square in chess.SQUARES:
             piece = board.piece_at(square)
             if piece is not None:
@@ -42,6 +57,15 @@ class Agent():
                     value = -value
                 
                 board_tensor[square] = value
+        
+        # next 64 values for attack/defense info
+        for square in chess.SQUARES:
+            attacks = 0
+            if board.is_attacked_by(self.color, square):
+                attacks += 1
+            if board.is_attacked_by(not self.color, square):
+                attacks -= 1
+            board_tensor[64 + square] = attacks
 
         return board_tensor
     
@@ -53,11 +77,21 @@ class Agent():
         
         # epsilon-greedy
         if random.random() < self.epsilon:
-            if random.random() < 0.5:
+            rand = random.random()
+
+            if rand < 0.6:
                 # capture any piece possilbe
                 capture_moves = [move for move in legal_moves if self.board.is_capture(move)]
                 if capture_moves:
                     return random.choice(capture_moves), 0.0
+            elif rand < 0.8:
+                # move a piece that is under attack
+                attacked_moves = []
+                for move in legal_moves:
+                    if self.board.is_attacked_by(not self.color, move.from_square):
+                        attacked_moves.append(move)
+                if attacked_moves:
+                    return random.choice(attacked_moves), 0.0
                 
             return random.choice(legal_moves), 0.0
         
@@ -87,18 +121,7 @@ class Agent():
     
     def train_step(self, move, old_board, new_board, reward, value, opponent_reward=0):
         # get tensor of old board
-        # old_board = self.board.copy()
-        # old_board_state = self.board_to_tensor(self.board).unsqueeze(0)
         old_board_state = self.board_to_tensor(old_board).unsqueeze(0)
-
-        # make move
-        # self.board.push(move)
-
-        # calculate reward
-        # reward = self.getReward(old_board, self.board, move)
-        
-        # the old prediction for the previous state should be updated based on reward
-        # Q-learning update algorithm: Q(s, a) = Q(s, a) + alpha * (reward + discount * max_next_Q - Q(s, a))
         
         with torch.no_grad():
             if new_board.is_game_over():
@@ -116,6 +139,7 @@ class Agent():
         self.optimizer.zero_grad()
         loss = self.criterion(predicted_q, target_q)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
 
         self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
@@ -151,20 +175,16 @@ class Agent():
             piece_value = piece_values.get(captured_piece.piece_type, 0)
             reward += piece_value
 
-        # # penalty for moving into attack
-        # if new_state.is_attacked_by(not self.color, move.to_square):
-        #     hanged_piece = new_state.piece_at(move.to_square)
-        #     if hanged_piece:
-        #         piece_values = {chess.PAWN: 10, chess.ROOK: 50, chess.KNIGHT: 30,
-        #                     chess.BISHOP: 30, chess.QUEEN: 90, chess.KING: 0}
-        #         reward -= piece_values.get(hanged_piece.piece_type, 0) * 0.5
+            # extra bonus if the captured piece was hanging (not defended)
+            if not old_state.is_attacked_by(not self.color, move.to_square):
+                reward += piece_value * 2.0
 
-        # # penalty for any hanging piece - UNTESTED
-        # for square in chess.SQUARES:
-        #     piece = new_state.piece_at(square)
-        #     if piece and piece.color == self.color:
-        #         if new_state.is_attacked_by(not self.color, square):
-        #             reward -= piece_values.get(piece.piece_type, 0) * 0.2
+        # penalty for hanging its own pieces
+        our_piece = new_state.piece_at(move.to_square)
+        if our_piece and new_state.is_attacked_by(not self.color, move.to_square):
+            if not new_state.is_attacked_by(self.color, move.to_square):
+                reward -= piece_values.get(our_piece.piece_type, 0) * 0.8
+    
 
         if new_state.is_check():
             reward += 15
@@ -204,8 +224,7 @@ class Agent():
         
         try:
             print("Initial board:")
-            print(test_board)
-            print()
+            self.printBoard(test_board)
             
             while not test_board.is_game_over():
                 input("Press Enter to continue to the next move...")
@@ -224,16 +243,16 @@ class Agent():
 
                     test_board.push(move)
                     
+                    self.printBoard(test_board)
+                    print(f"Move {move_count}: {player} plays {move} (value: {value:.3f})")
                     if captured_piece:
                         print(f"{player} captures {captured_piece.symbol()} on {chess.square_name(move.to_square)}")
-
-                    print(test_board)
-                    print(f"Move {move_count}: {player} plays {move} (value: {value:.3f})")
+                    
                 else:
                     break
             
             print(f"\nFinal board after {move_count} moves:")
-            print(test_board)
+            self.printBoard(test_board)
             
             # print result
             if test_board.is_checkmate():
@@ -261,13 +280,13 @@ class Agent():
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
-        self.fc1 = nn.Linear(64, 1024)
-        self.fc2 = nn.Linear(1024, 512)
-        self.fc3 = nn.Linear(512, 256)
-        self.fc4 = nn.Linear(256, 128)
-        self.fc5 = nn.Linear(128, 1)
+        self.fc1 = nn.Linear(128, 256)
+        self.fc2 = nn.Linear(256, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, 64)
+        self.fc5 = nn.Linear(64, 1)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(p=0.3)
+        self.dropout = nn.Dropout(p=0.1)
 
     def forward(self, x):
         x = self.relu(self.fc1(x))
@@ -275,7 +294,6 @@ class Model(nn.Module):
         x = self.relu(self.fc2(x))
         x = self.dropout(x)
         x = self.relu(self.fc3(x))
-        x = self.dropout(x)
         x = self.relu(self.fc4(x))
         x = self.fc5(x)
         return x

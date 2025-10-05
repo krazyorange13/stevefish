@@ -94,7 +94,6 @@ class ChessGame:
                     self.pending_agent1_training = {
                         'move': move,
                         'old_board': old_board,
-                        'new_board': self.board.copy(),
                         'value': val,
                         'reward': reward
                     }
@@ -119,7 +118,7 @@ class ChessGame:
                         total_reward = self.agent1.train_step(
                             self.pending_agent1_training['move'],
                             self.pending_agent1_training['old_board'],
-                            self.pending_agent1_training['new_board'],
+                            self.board,
                             self.pending_agent1_training['reward'],
                             self.pending_agent1_training['value'],
                             opponent_reward=self.opponent_reward + 25
@@ -130,18 +129,12 @@ class ChessGame:
                 else:
                     break
 
-            if (show_board):
-                print(self.board)
-                print(f"Move {self.board.fullmove_number}: {'White' if self.board.turn == chess.BLACK else 'Black'} plays {move} (value: {val:.3f})")
-                print("\n")
-                input("Press Enter to continue...")
-
         # handle final agent1 training if game ended before agent2 could respond
         if self.pending_agent1_training:
             actual_training_reward = self.agent1.train_step(
                 self.pending_agent1_training['move'],
                 self.pending_agent1_training['old_board'],
-                self.pending_agent1_training['new_board'],
+                self.board,
                 self.pending_agent1_training['reward'],
                 self.pending_agent1_training['value'],
                 opponent_reward=0
@@ -160,7 +153,7 @@ class ChessGame:
         print("Training started! Press Ctrl+C anytime to pause and test the model.")
         print(f"Training for {num_games} games...")
 
-        for i in range(num_games):
+        for i in range(num_games+1):
             self.current_game = i + 1
             print(f"Starting game {i+1}/{num_games}")
 
@@ -168,8 +161,8 @@ class ChessGame:
             if i % self.copy_frequency == 0:
                 self.copy_agent1_to_agent2()
 
-            if (i == num_games - 1):
-                self.run_one_game(show_board=True)
+            if (i == num_games):
+                self.agent1.play_test_game(self.agent2)
                 self.save_and_exit()
             else:
                 self.run_one_game()
