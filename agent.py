@@ -31,7 +31,7 @@ class Agent():
         if color is None:
             color = self.color
 
-        if self.color == chess.BLACK:
+        if color == chess.BLACK:
             board = board.mirror()
 
         board_tensor = torch.zeros(128, dtype=torch.float32).to(device)
@@ -53,7 +53,7 @@ class Agent():
                 value = piece_to_value[piece.piece_type]
 
                 # negative for enemy pieces
-                if piece.color != self.color:
+                if piece.color != color:
                     value = -value
                 
                 board_tensor[square] = value
@@ -61,9 +61,9 @@ class Agent():
         # next 64 values for attack/defense info
         for square in chess.SQUARES:
             attacks = 0
-            if board.is_attacked_by(self.color, square):
+            if board.is_attacked_by(color, square):
                 attacks += 1
-            if board.is_attacked_by(not self.color, square):
+            if board.is_attacked_by(not color, square):
                 attacks -= 1
             board_tensor[64 + square] = attacks
 
