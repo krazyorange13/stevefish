@@ -17,6 +17,7 @@ class ChessGame:
         self.copy_frequency = 50
         self.opponent_reward = 0
         self.pending_agent1_training = None
+        self.training_memory = []
 
     def signal_handler(self, sig, frame):
         print("\n" + "="*50)
@@ -70,6 +71,9 @@ class ChessGame:
         game_reward_agent1 = 0
         game_reward_agent2 = 0
         self.pending_agent1_training = None
+
+        self.training_memory = []
+
         while not (self.board.is_game_over()):
 
             self.sync_boards()
@@ -115,15 +119,15 @@ class ChessGame:
                     game_reward_agent2 += self.opponent_reward - self.pending_agent1_training['reward'] if self.pending_agent1_training else 0
 
                     if self.pending_agent1_training:
-                        total_reward = self.agent1.train_step(
-                            self.pending_agent1_training['move'],
-                            self.pending_agent1_training['old_board'],
-                            self.board,
-                            self.pending_agent1_training['reward'],
-                            self.pending_agent1_training['value'],
-                            opponent_reward=self.opponent_reward + 25
-                        )
-                        game_reward_agent1 += total_reward
+
+                        self.training_memory.append({
+                            'move': self.pending_agent1_training['move'],
+                            'old_board': self.pending_agent1_training['old_board'],
+                            'new_board': self.board.copy(),
+                            'reward': self.pending_agent1_training['reward'],
+                            'value': self.pending_agent1_training['value'],
+                            'opponent_reward': self.opponent_reward + 25
+                        })
 
                     self.pending_agent1_training = None
                 else:
@@ -131,19 +135,39 @@ class ChessGame:
 
         # handle final agent1 training if game ended before agent2 could respond
         if self.pending_agent1_training:
-            actual_training_reward = self.agent1.train_step(
-                self.pending_agent1_training['move'],
-                self.pending_agent1_training['old_board'],
-                self.board,
-                self.pending_agent1_training['reward'],
-                self.pending_agent1_training['value'],
-                opponent_reward=0
-            )
-            game_reward_agent1 += actual_training_reward
+
+            self.training_memory.append({
+                'move': self.pending_agent1_training['move'],
+                'old_board': self.pending_agent1_training['old_board'],
+                'new_board': self.board.copy(),
+                'reward': self.pending_agent1_training['reward'],
+                'value': self.pending_agent1_training['value'],
+                'opponent_reward': 0
+            })
         
         print("result:", self.board.result())
-        print("Game reward Agent 1 (White):", game_reward_agent1)
+
+        print(f"Training on {len(self.training_memory)} moves from this game...")
+        
+        # train agent1 on entire game in reverse order
+        total_training_reward = 0
+        self.training_memory.reverse()
+        for mem in self.training_memory:
+            training_reward = self.agent1.train_step(
+                mem['move'],
+                mem['old_board'],
+                mem['new_board'],
+                mem['reward'],
+                mem['value'],
+                opponent_reward=mem['opponent_reward']
+            )
+            total_training_reward += training_reward
+
+        print("Game reward Agent 1 (White):", total_training_reward)
         print("Game reward Agent 2 (Black):", game_reward_agent2)
+
+        # reduce epsilon
+        self.agent1.epsilon = max(self.agent1.epsilon * self.agent1.epsilon_decay, self.agent1.epsilon_min)
 
     def run(self):
         signal.signal(signal.SIGINT, self.signal_handler)

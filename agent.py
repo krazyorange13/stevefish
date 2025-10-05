@@ -142,8 +142,6 @@ class Agent():
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
 
-        self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
-
         return reward - opponent_reward
 
     def getReward(self, old_state, new_state, move):
