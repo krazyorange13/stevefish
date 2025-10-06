@@ -152,7 +152,8 @@ class TTTGame:
 
         if self.get_draw():
             # we still reward this bc perfect ttt is a draw
-            reward = 1  # draw :)
+            reward = 0  # draw :)
+            # idk i'll try leaving this at zero actually
 
         # true if game over
         done = self.get_win() or self.get_draw()
@@ -201,10 +202,9 @@ def select_action(game: TTTGame):
     else:
         # pick a random legal move
         moves = game.get_legal_moves()
-        random.shuffle(moves)
-        m = moves[0]
-        y = [0] * 9
-        y[m] = 1
+        m = random.choice(moves)
+        y = [False] * 9
+        y[m] = True
         y = torch.tensor(y, dtype=torch.bool)
         return y
 
@@ -271,6 +271,8 @@ else:
     num_episodes = 50
 
 for i_episode in range(num_episodes):
+    print(end=".")
+
     state = TTTGame()
     state_t = state.get_tensor(device=device)
 
@@ -281,5 +283,44 @@ for i_episode in range(num_episodes):
         if done:
             next_state = None
         else:
-            next_state, reward, done = 
+            # TODO: right now it's just doing a random move!!!
+            # we don't want that. although since tic-tac-toe is so simple, it might learn something lol
+            m = random.choice(state.get_legal_moves())
+            action = [False] * 9
+            action[m] = True
+            action = torch.tensor(action, device=device, dtype=torch.bool)
+            next_state, reward, done = state.step(action, p=2, device=device)
             next_state = torch.tensor(next_state, device=device, dtype=torch.bool)
+
+        memory.push(state, action, next_state, reward)
+
+        optimize_model()
+
+        # i think this slowly adjusts the target net to be similar, but behind, the policy net
+        # that way it's not training on itself exactly
+        target_net_state_dict = target_net.state_dict()
+        policy_net_state_dict = policy_net.state_dict()
+        for key in policy_net_state_dict:
+            target_net_state_dict[key] = policy_net_state_dict[
+                key
+            ] * TAU + target_net_state_dict[key] * (1 - TAU)
+        target_net.load_state_dict(target_net_state_dict)
+
+        if done:
+            if state.get_win() == 1:
+                result = 1
+                # won :)
+            elif state.get_win() == 2:
+                # lost :(
+                result = -1
+            else:
+                # includes draw
+                result = 0
+            episode_results.append(result)
+            plot()
+            break
+
+print("complete")
+plot(show_result=True)
+plt.ioff()
+plt.show()
