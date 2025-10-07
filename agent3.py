@@ -38,6 +38,7 @@ class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
         self.layers = nn.Sequential(
+            nn.Flatten(0),
             nn.Linear(n_observations, 128),
             nn.ReLU(),
             nn.Linear(128, 128),
@@ -246,9 +247,12 @@ def optimize_model():
         dtype=torch.bool,
     )
     non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
-    state_batch = torch.cat(batch.state)
-    action_batch = torch.cat(batch.action)
-    reward_batch = torch.cat(batch.reward)
+    state_batch = torch.stack(batch.state)
+    action_batch = torch.stack(batch.action)
+    reward_batch = torch.stack(batch.reward)
+
+    print(batch.state)
+    print(state_batch)
 
     # i'm really not sure what is going on here :P
     state_action_values = policy_net(state_batch).gather(1, action_batch)
