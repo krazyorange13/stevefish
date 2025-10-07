@@ -163,7 +163,7 @@ class TTTGame:
 
 BATCH_SIZE = 128
 GAMMA = 0.99
-EPS_START = 0.9
+EPS_START = 0.1  # low for debugging TODO: return to normal
 EPS_END = 0.01
 EPS_DECAY = 2500
 TAU = 0.005
@@ -192,9 +192,15 @@ def select_action(game: TTTGame):
     )
     steps_done += 1
 
-    if sample > eps_threshold:
+    print(steps_done)
+
+    # if sample > eps_threshold:
+    if True:
         with torch.no_grad():
-            X = torch.flatten(game.get_tensor(device=device))
+            X = game.get_tensor(device=device)
+            # print(X)
+            X = torch.flatten(X)
+            # print(X)
             y = policy_net(X)
             # convert to boolean mask, 1 if greater than than zero, else 0
             y = torch.gt(y, 0)
@@ -277,6 +283,8 @@ for i_episode in range(num_episodes):
     state_t = state.get_tensor(device=device)
 
     for t in count():
+        start_tensor = state.get_tensor(device=device)
+
         action = select_action(state)
         next_state, reward, done = state.step(action, p=1, device=device)
 
@@ -290,9 +298,14 @@ for i_episode in range(num_episodes):
             action[m] = True
             action = torch.tensor(action, device=device, dtype=torch.bool)
             next_state, reward, done = state.step(action, p=2, device=device)
-            next_state = torch.tensor(next_state, device=device, dtype=torch.bool)
+            # next_state = torch.tensor(next_state, device=device, dtype=torch.bool)
 
-        memory.push(state, action, next_state, reward)
+        memory.push(
+            start_tensor,
+            action,
+            torch.tensor([reward], device=device, dtype=torch.int),
+            next_state,
+        )
 
         optimize_model()
 
