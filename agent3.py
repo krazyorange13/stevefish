@@ -37,8 +37,9 @@ class ReplayMemory:
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
+        self.flatten = nn.Flatten(0)
         self.layers = nn.Sequential(
-            nn.Flatten(0),
+            # nn.Flatten(),
             nn.Linear(n_observations, 128),
             nn.ReLU(),
             nn.Linear(128, 128),
@@ -47,6 +48,9 @@ class DQN(nn.Module):
         )
 
     def forward(self, x):
+        # print(x)
+        # x = self.flatten(x)
+        # print(x)
         return self.layers(x)
 
 
@@ -134,12 +138,17 @@ class TTTGame:
         reward = 0
         done = 0
 
-        if action.count(True) != 1:
+        # print(action)
+
+        # if action.count(1) != 1:
+        if action not in self.get_legal_moves():
+            # print("bad move:", action.count(True))
             # invalid move! we should only have one True
-            reward = -100
+            reward = -5
+            print("bad move :(")
             return next_state, reward, done
 
-        move = action.index(True)
+        move = action  # action.index(True)
         self.do_move(p, move)
 
         next_state = self.get_tensor(device=device)
@@ -159,12 +168,14 @@ class TTTGame:
         # true if game over
         done = self.get_win() or self.get_draw()
 
+        # print(next_state)
+
         return next_state, reward, done
 
 
 BATCH_SIZE = 128
 GAMMA = 0.99
-EPS_START = 0.1  # low for debugging TODO: return to normal
+EPS_START = 0.9
 EPS_END = 0.01
 EPS_DECAY = 2500
 TAU = 0.005
@@ -172,7 +183,8 @@ LR = 3e-4
 
 game = TTTGame()
 n_observations = 3 * 3 * 2
-n_actions = 3 * 3
+# n_actions = 3 * 3 # all false, just true on the square to move in
+n_actions = 1  # the index of the square to move in
 
 policy_net = DQN(n_observations, n_actions).to(device)
 target_net = DQN(n_observations, n_actions).to(device)
@@ -184,7 +196,7 @@ memory = ReplayMemory(10000)
 steps_done = 0
 
 
-def select_action(game: TTTGame):
+def select_action(game: TTTGame, net: nn.Module):
     global steps_done
 
     sample = random.random()
@@ -193,18 +205,24 @@ def select_action(game: TTTGame):
     )
     steps_done += 1
 
-    print(steps_done)
+    # print(eps_threshold)
 
-    # if sample > eps_threshold:
-    if True:
+    # print(steps_done)
+
+    if sample > eps_threshold:
+        # if True:
         with torch.no_grad():
             X = game.get_tensor(device=device)
             # print(X)
             X = torch.flatten(X)
+            X = X.unsqueeze(0)
             # print(X)
-            y = policy_net(X)
+            # print(X.shape)
+            y = net(X)
+            # print(y.shape)
             # convert to boolean mask, 1 if greater than than zero, else 0
-            y = torch.gt(y, 0)
+            # y = torch.gt(y, 0).squeeze()
+            y = y.int().squeeze()
             return y
     else:
         # pick a random legal move
@@ -246,18 +264,38 @@ def optimize_model():
         device=device,
         dtype=torch.bool,
     )
-    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+    _non_final_next_states = [s for s in batch.next_state if s is not None]
+    if len(_non_final_next_states) == 0:
+        print("no finished games :(")
+        return
+    non_final_next_states = torch.stack(_non_final_next_states)
     state_batch = torch.stack(batch.state)
     action_batch = torch.stack(batch.action)
     reward_batch = torch.stack(batch.reward)
+    # next_state_batch = torch.stack(batch.next_state)
 
-    print(batch.state)
-    print(state_batch)
+    # print(state_batch.shape)
+    # print(action_batch.shape)
+    # print(reward_batch.shape)
+    # print(next_state_batch.shape)
+    # print(non_final_next_states.shape)
+    # print(state_batch[0])
+    # print(action_batch[0])
+    # print(reward_batch[0])
+    # print(next_state_batch[0])
+    # print(non_final_next_states[0])
+
+    # print(batch.state)
+    # print(state_batch)
+
+    # print("we're about to do the the batched run :/")
 
     # i'm really not sure what is going on here :P
-    state_action_values = policy_net(state_batch).gather(1, action_batch)
+    state_action_values = policy_net(state_batch)  # .gather(1, action_batch)
 
-    next_state_values = torch.zeros(BATCH_SIZE, device=device)
+    # print("WE GOT PAST THE BATCHED RUN!!!")
+
+    next_state_values = torch.zeros(BATCH_SIZE, 9, device=device, dtype=torch.bool)
     with torch.no_grad():
         # idk if this will work
         next_state_values[non_final_mask] = torch.gt(
@@ -267,21 +305,23 @@ def optimize_model():
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
     criterion = nn.SmoothL1Loss()
-    loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+    loss = criterion(state_action_values, expected_state_action_values)
 
     optimizer.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
 
+    # print("we finished the function??")
+
 
 if torch.cuda.is_available() or torch.backends.mps.is_available():
     num_episodes = 600
 else:
-    num_episodes = 50
+    num_episodes = 500
 
 for i_episode in range(num_episodes):
-    print(end=".")
+    print(end=".", flush=True)
 
     state = TTTGame()
     state_t = state.get_tensor(device=device)
@@ -289,26 +329,36 @@ for i_episode in range(num_episodes):
     for t in count():
         start_tensor = state.get_tensor(device=device)
 
-        action = select_action(state)
+        # print("state", start_tensor)
+
+        action = select_action(state, net=policy_net)
+        # print("action", action)
         next_state, reward, done = state.step(action, p=1, device=device)
+
+        # print("next_state", next_state)
 
         if done:
             next_state = None
+            # pass
         else:
             # TODO: right now it's just doing a random move!!!
             # we don't want that. although since tic-tac-toe is so simple, it might learn something lol
-            m = random.choice(state.get_legal_moves())
-            action = [False] * 9
-            action[m] = True
-            action = torch.tensor(action, device=device, dtype=torch.bool)
-            next_state, reward, done = state.step(action, p=2, device=device)
+            # m = random.choice(state.get_legal_moves())
+            # action = [False] * 9
+            # action[m] = True
+            # action = torch.tensor(action, device=device, dtype=torch.bool)
+            action = select_action(state, net=target_net)
+            next_state, _, _ = state.step(action, p=2, device=device)
+            # print("ran this")
             # next_state = torch.tensor(next_state, device=device, dtype=torch.bool)
 
+        # print(next_state)
+
         memory.push(
-            start_tensor,
-            action,
+            start_tensor.flatten(),  # .unsqueeze(0),
+            action.int(),
             torch.tensor([reward], device=device, dtype=torch.int),
-            next_state,
+            next_state.flatten() if next_state is not None else None,
         )
 
         optimize_model()
@@ -334,7 +384,7 @@ for i_episode in range(num_episodes):
                 # includes draw
                 result = 0
             episode_results.append(result)
-            plot()
+            # plot()
             break
 
 print("complete")
