@@ -44,6 +44,10 @@ class DQN(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 128),
             nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
             nn.Linear(128, n_actions),
         )
 
@@ -145,7 +149,8 @@ class TTTGame:
             # print("bad move:", action.count(True))
             # invalid move! we should only have one True
             reward = -5
-            print("bad move :(")
+            # print(action)
+            # print("bad move :(")
             return next_state, reward, done
 
         move = action  # action.index(True)
@@ -226,11 +231,14 @@ def select_action(game: TTTGame, net: nn.Module):
             return y
     else:
         # pick a random legal move
-        moves = game.get_legal_moves()
-        m = random.choice(moves)
-        y = [False] * 9
-        y[m] = True
-        y = torch.tensor(y, dtype=torch.bool)
+        # moves = game.get_legal_moves()
+        # m = random.choice(moves)
+        # y = [False] * 9
+        # y[m] = True
+        # y = torch.tensor(y, dtype=torch.bool)
+        y = random.choice(game.get_legal_moves())
+        y = torch.tensor(y, dtype=torch.int)
+        # print(y)
         return y
 
 
@@ -266,7 +274,7 @@ def optimize_model():
     )
     _non_final_next_states = [s for s in batch.next_state if s is not None]
     if len(_non_final_next_states) == 0:
-        print("no finished games :(")
+        # print("no finished games :(")
         return
     non_final_next_states = torch.stack(_non_final_next_states)
     state_batch = torch.stack(batch.state)
@@ -295,12 +303,13 @@ def optimize_model():
 
     # print("WE GOT PAST THE BATCHED RUN!!!")
 
-    next_state_values = torch.zeros(BATCH_SIZE, 9, device=device, dtype=torch.bool)
+    next_state_values = torch.zeros(BATCH_SIZE, 1, device=device, dtype=torch.int)
     with torch.no_grad():
         # idk if this will work
-        next_state_values[non_final_mask] = torch.gt(
-            target_net(non_final_next_states), 1
-        )
+        # next_state_values[non_final_mask] = torch.gt(
+        #     target_net(non_final_next_states), 1
+        # )
+        next_state_values[non_final_mask] = target_net(non_final_next_states).int()
 
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
@@ -339,6 +348,7 @@ for i_episode in range(num_episodes):
 
         if done:
             next_state = None
+            print(end="x", flush=True)
             # pass
         else:
             # TODO: right now it's just doing a random move!!!
@@ -385,6 +395,7 @@ for i_episode in range(num_episodes):
                 result = 0
             episode_results.append(result)
             # plot()
+            # print(state.board)
             break
 
 print("complete")
