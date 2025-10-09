@@ -326,10 +326,6 @@ def optimize_model():
         #     target_net(non_final_next_states), 1
         # )
         next_state_values[non_final_mask] = target_net(non_final_next_states).int()
-        # next_state_values[non_final_mask] = torch.gt(
-        #     target_net(non_final_next_states), 1
-        # )
-        next_state_values[non_final_mask] = target_net(non_final_next_states).int()
 
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
