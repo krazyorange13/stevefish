@@ -140,7 +140,11 @@ class TTTGame:
         )
 
     def step(self, action, p, device):
-        action = action.tolist()
+        action = action.item()
+        # print(action)
+        # action = max(range(len(action)), key=action.__getitem__)
+        print(action)
+        # action is just an int, index to move
 
         next_state = None
         reward = 0
@@ -195,7 +199,8 @@ LR = 3e-4
 game = TTTGame()
 n_observations = 3 * 3 * 2
 # n_actions = 3 * 3 # all false, just true on the square to move in
-n_actions = 1  # the index of the square to move in
+# n_actions = 1  # the index of the square to move in
+n_actions = 3 * 3  # Q value for each square to move in
 
 policy_net = DQN(n_observations, n_actions).to(device)
 target_net = DQN(n_observations, n_actions).to(device)
@@ -216,44 +221,18 @@ def select_action(game: TTTGame, net: nn.Module):
     )
     steps_done += 1
 
-    # print(eps_threshold)
-
-    # print(steps_done)
-
     if sample > eps_threshold:
-        # if True:
         with torch.no_grad():
-            X = game.get_tensor(device=device)
-            # print(X)
-            X = torch.flatten(X)
-            X = X.unsqueeze(0)
-            # print(X)
-            # print(X.shape)
-            y = net(X)
-            # print(y.shape)
-            # convert to boolean mask, 1 if greater than than zero, else 0
-            # y = torch.gt(y, 0).squeeze()
-            y = y.int().squeeze()
-            return y
+            X = game.get_tensor(device=device).flatten().unsqueeze(0)
+            y = net(X).squeeze()
+            ys = y.tolist()
+            action = max(range(len(ys)), key=ys.__getitem__)
+            return torch.tensor(action, device=device)
     else:
-        # pick a random legal move
-        # moves = game.get_legal_moves()
-        # m = random.choice(moves)
-        # y = [False] * 9
-        # y[m] = True
-        # y = torch.tensor(y, dtype=torch.bool)
         y = random.choice(game.get_legal_moves())
-        y = torch.tensor(y, dtype=torch.int)
-        # print(y)
-        # moves = game.get_legal_moves()
-        # m = random.choice(moves)
-        # y = [False] * 9
-        # y[m] = True
-        # y = torch.tensor(y, dtype=torch.bool)
-        y = random.choice(game.get_legal_moves())
-        y = torch.tensor(y, dtype=torch.int)
-        # print(y)
-        return y
+        # y = [random.uniform(-1, 1) for _ in range(n_actions)]
+        # y = torch.tensor(y, dtype=torch.float)
+        return torch.tensor(y, device=device)
 
 
 episode_results = []
@@ -262,6 +241,11 @@ episode_results = []
 def plot(show_result=False):
     plt.figure(1)
     results_t = torch.tensor(episode_results, dtype=torch.int)
+    # results_avg = []
+    # for i, result in enumerate(episode_results):
+    # working_avg = 0
+    # working_avg += result / (i + 1)
+    # results_avg.append(working_avg)
     if show_result:
         plt.title("result")
     else:
@@ -269,7 +253,7 @@ def plot(show_result=False):
         plt.title("training...")
     plt.xlabel("episode")
     plt.ylabel("result")
-    plt.plot(results_t.numpy())
+    plt.plot(results_t)
     plt.pause(0.001)
 
 
@@ -293,7 +277,7 @@ def optimize_model():
         return
     non_final_next_states = torch.stack(_non_final_next_states)
     state_batch = torch.stack(batch.state)
-    action_batch = torch.stack(batch.action)
+    action_batch = torch.stack(batch.action).unsqueeze(1)
     reward_batch = torch.stack(batch.reward)
     # next_state_batch = torch.stack(batch.next_state)
 
@@ -314,18 +298,18 @@ def optimize_model():
     # print("we're about to do the the batched run :/")
 
     # i'm really not sure what is going on here :P
-    state_action_values = policy_net(state_batch)  # .gather(1, action_batch)
+    print(state_batch.shape, action_batch.shape)
+    state_action_values = policy_net(state_batch).gather(1, action_batch)
 
     # print("WE GOT PAST THE BATCHED RUN!!!")
 
-    next_state_values = torch.zeros(BATCH_SIZE, 1, device=device, dtype=torch.int)
-    next_state_values = torch.zeros(BATCH_SIZE, 1, device=device, dtype=torch.int)
+    next_state_values = torch.zeros(BATCH_SIZE, 9, device=device, dtype=torch.float)
     with torch.no_grad():
         # idk if this will work
         # next_state_values[non_final_mask] = torch.gt(
         #     target_net(non_final_next_states), 1
         # )
-        next_state_values[non_final_mask] = target_net(non_final_next_states).int()
+        next_state_values[non_final_mask] = target_net(non_final_next_states).float()
 
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
@@ -354,13 +338,19 @@ for i_episode in range(num_episodes):
     for t in count():
         start_tensor = state.get_tensor(device=device)
 
+        print(start_tensor.tolist())
+
         # print("state", start_tensor)
+
+        # print("selecting action")
 
         action = select_action(state, net=policy_net)
         # print("action", action)
         next_state, reward, done = state.step(action, p=1, device=device)
 
         # print("next_state", next_state)
+
+        # print("selecting opposite action")
 
         if done:
             next_state = None
@@ -383,11 +373,15 @@ for i_episode in range(num_episodes):
         memory.push(
             start_tensor.flatten(),  # .unsqueeze(0),
             action.int(),
-            torch.tensor([reward], device=device, dtype=torch.int),
+            torch.tensor([reward], device=device, dtype=torch.float),
             next_state.flatten() if next_state is not None else None,
         )
 
+        # print("optimizing model")
+
         optimize_model()
+
+        # print("updating target net")
 
         # i think this slowly adjusts the target net to be similar, but behind, the policy net
         # that way it's not training on itself exactly
@@ -410,7 +404,7 @@ for i_episode in range(num_episodes):
                 # includes draw
                 result = 0
             episode_results.append(result)
-            # plot()
+            plot()
             # print(state.board)
             # print(state.board)
             break
