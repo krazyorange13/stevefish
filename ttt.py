@@ -31,22 +31,45 @@ class TTT:
             return False
 
         # turn check
-        counts = [
-            np.count_nonzero(self.board == p) for p in range(1, TTT.N_PLAYERS + 1)
-        ]
-        least_p = np.argmin(counts) + 1
-        if p != least_p:
+        next_p = self.get_next_p()
+        if p != next_p:
             print(
-                f"TTT.move warning: p={p} != least_p={least_p}. The turns may be out of order."
+                f"TTT.move warning: p={p} != least_p={next_p}. The turns may be out of order."
             )
 
         self.board[row][col] = p
         return True
 
+    def get_next_p(self):
+        # the next player to go is the person with the least amount of pieces on the board,
+        # or if there's the same amount, the first player
+        counts = [
+            np.count_nonzero(self.board == p) for p in range(1, TTT.N_PLAYERS + 1)
+        ]
+        least_p = np.argmin(counts) + 1
+        return least_p
+
     def get_legal_moves(self) -> np.ndarray:
         # return all empty squares
         # array of [row,col] pairs
         return np.argwhere(self.board == 0)
+
+    def get_legal_moves_simple(self) -> np.ndarray:
+        return self.board == 0
+
+    def get_done(self):
+        return any(self.get_wins()) or self.get_draw()
+
+    def get_win_next_turn(self):
+        # scan through all possible next states and check for wins
+        next_p = self.get_next_p()
+        state = TTT()  # this feels morally wrong
+        for row, col in self.get_legal_moves():
+            state.board = self.board.copy()
+            state.board[row][col] = next_p
+            if any(state.get_wins()):
+                return True
+        return False
 
     def get_wins(self):
         # return a list of bools, where [0] corresponds to player 1
