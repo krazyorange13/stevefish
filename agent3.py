@@ -102,12 +102,19 @@ class NoLegalMovesException(Exception):
     """Exception raised when no legal moves are available."""
 
 
+class InvalidPlayerException(Exception):
+    """Invalid player."""
+
+
 class Environment:
     def __init__(self, nets):
         self.game = TTT()
 
         self.nets = nets
         random.shuffle(self.nets)
+
+        self.policy_net_p = self.nets.index(policy_net) + 1
+        self.target_net_p = self.nets.index(target_net) + 1
 
     def step(self, action, p):
         reward = 0
@@ -127,8 +134,8 @@ class Environment:
         if self.game.get_win(p):
             # hooray :D we won!
             reward = 1
-        # elif any(self.game.get_wins()):
-        elif self.game.get_win_next_turn():
+        # elif self.game.get_win_next_turn():
+        elif any(self.game.get_wins()):
             # any potential wins NEXT TURN (so the opponent)?
             # either we will lose, or the opponent will blunder and we can keep going,
             # but either way we want to give negative reward
@@ -164,16 +171,7 @@ class DQN(nn.Module):
         )
 
     def forward(self, x):
-        # print("x:", x.shape)
-        # x should be a 3x3 board
-        # channel encode it!
-        no = (x == 0).float()
-        xs = (x == 1).float()
-        os = (x == 2).float()
-        board = torch.cat([no, xs, os], dim=1)  # .flatten(1)
-        # print("board:", board)
-        # print("board:", board.shape)
-        return self.layers(board)
+        return self.layers(x)
 
 
 BATCH_SIZE = 128
@@ -182,7 +180,7 @@ EPS_START = 0.9
 EPS_END = 0.01
 EPS_DECAY = 2500
 TAU = 0.005
-LR = 3e-3
+LR = 3e-4
 
 eps_steps = 0
 
@@ -207,6 +205,8 @@ def train(n_episodes):
 
         env = Environment([policy_net, target_net])
 
+        first_step(env)
+
         for step_i in count():
             # replay memory gathers training sample by interacting with the environment
             done = step(env, memory, analysis)
@@ -229,26 +229,48 @@ def train(n_episodes):
     print("stop")
 
 
+def first_step(env: Environment):
+    if env.target_net_p != 1:
+        return
+
+    state = torch.from_numpy(env.game.board.copy()).flatten().unsqueeze(0)
+    raw_state = torch.from_numpy(env.game.board)
+    state = encode_board(state, env.target_net_p)
+    action = greedy_action(state, raw_state, target_net)
+    _, _ = env.step(action, env.target_net_p)
+
+
 def step(env: Environment, memory: ReplayMemory, analysis: Analysis):
-    for i, net in enumerate(env.nets):
-        state = env.game.board.copy()
-        action = greedy_action(env.game, net)
-        reward, next_state = env.step(action, i + 1)
-        done = env.game.get_done()
+    state = torch.from_numpy(env.game.board.copy()).flatten().unsqueeze(0)
+    state = encode_board(state, env.policy_net_p)
+    raw_state = torch.from_numpy(env.game.board)
+    action = greedy_action(state, raw_state, policy_net)
+    reward, next_state = env.step(action, env.policy_net_p)
+    next_state = torch.from_numpy(next_state).flatten().unsqueeze(0)
+    raw_next_state = torch.from_numpy(env.game.board)
+    done = env.game.get_done()
+    done_opp = False
 
-        # print(reward, end="\t", flush=True)
+    if done:
+        next_state = None
+    else:
+        next_state = encode_board(next_state, env.target_net_p)
+        action_opp = greedy_action(next_state, raw_next_state, target_net)
+        reward_opp, next_state_opp = env.step(action_opp, env.target_net_p)
+        next_state_opp = torch.from_numpy(next_state_opp).flatten().unsqueeze(0)
+        done_opp = env.game.get_done()
 
-        memory.push(
-            a := torch.tensor(state.flatten()),
-            b := torch.tensor([action]),
-            c := torch.tensor(reward),
-            d := torch.tensor(next_state.flatten()) if not done else None,
-        )
-        analysis.push(reward)
+        next_state_opp = encode_board(next_state_opp, env.policy_net_p)
+        next_state = next_state_opp
 
-        if done:
-            # print(f"memory.push({a}, {b}, {c}, {d})")
-            return True
+        # win if opp lost or lose if opp won
+        reward = reward_opp * -1
+
+    memory.push(state, torch.tensor([[action]]), torch.tensor([reward]), next_state)
+    analysis.push(reward)
+
+    if done or done_opp:
+        return True
 
     return False
 
@@ -260,28 +282,32 @@ def optimize(optimizer, memory):
     transitions = memory.sample(BATCH_SIZE)
     batch = Transition(*zip(*transitions))
 
-    state_batch = torch.stack(batch.state)
-    action_batch = torch.stack(batch.action)
-    reward_batch = torch.stack(batch.reward)
+    state_batch = torch.cat(batch.state)
+    action_batch = torch.cat(batch.action)
+    reward_batch = torch.cat(batch.reward)
     # next_state_batch = torch.stack(batch.next_state)
 
     # some next_states are finished! we don't want to run the target_net on them.
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)))
-    non_final_next_states = torch.stack([s for s in batch.next_state if s is not None])
+    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
 
     # print(state_batch.shape)
     # print(action_batch.shape)
     # print(reward_batch.shape)
-    # print(next_state_batch.shape)
+    # print(non_final_next_states.shape)
 
     # regenerate Q values for every state
     state_q_values = policy_net(state_batch)
+
+    # print(state_q_values.shape)
 
     # select JUST the Q values of the actions we chose before (with argmax n stuff, remember?)
     # i'm pretty confident now in what .gather is doing here :)
     # instead of action_batch we could just use a legal mask and argmax but idk
     state_q_values = state_q_values.gather(1, action_batch)
     # state_q_values is now a long list of the best Q value for every state
+
+    # print(state_q_values.shape)
 
     # okay i'm forming a foggy idea of what's going on with this part
     # we're using the net to predict one state ahead, and we'll train
@@ -295,9 +321,11 @@ def optimize(optimizer, memory):
     next_state_q_values = torch.zeros(BATCH_SIZE)
     with torch.no_grad():
         # TODO: do we need to do legal masking here??
-        next_state_q_values[non_final_mask] = (
-            target_net(non_final_next_states).max(1).values
-        )
+        target_net_predictions = target_net(non_final_next_states).max(1).values
+        # print(next_state_q_values.shape)
+        # print(non_final_mask.shape)
+        # print(target_net_predictions.shape)
+        next_state_q_values[non_final_mask] = target_net_predictions
     # next_state_q_values is now a long list of the best Q value for every next_state
 
     # GAMMA helps fight DQN overestimation?
@@ -326,7 +354,7 @@ def polyak():
         target_param.data.copy_(TAU * policy_param.data + (1 - TAU) * target_param.data)
 
 
-def greedy_action(game: TTT, net: nn.Module):
+def greedy_action(state: torch.Tensor, raw_state: torch.Tensor, net: nn.Module):
     global eps_steps
     sample = random.random()
     eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(
@@ -334,21 +362,18 @@ def greedy_action(game: TTT, net: nn.Module):
     )
     eps_steps += 1
 
+    # if True:
     if sample > eps_threshold:
         # use net to get move
         # flatten is to convert 3x3 to 9
-        X = torch.tensor(game.board).flatten().unsqueeze(0)
+        X = state
         y = net(X.float()).squeeze()
         # legal mask for posterity
-        illegal_mask = (game.board != 0).flatten()
+        illegal_mask = (raw_state != 0).flatten()
 
-        # print("illegal mask:")
-        # print(illegal_mask)
-
-        if np.all(illegal_mask):
+        if torch.all(illegal_mask):
             raise NoLegalMovesException()
 
-        # we can leave out the logical_not() if we just do (game.board != 0)
         y[illegal_mask] = float("-inf")
         move = torch.argmax(y).item()
 
@@ -356,11 +381,29 @@ def greedy_action(game: TTT, net: nn.Module):
 
     else:
         # pick a random move
-        actions = np.nonzero((game.board == 0).flatten())[0]
+        actions = torch.nonzero((raw_state == 0).flatten())
         action = random.choice(actions).item()
-        # print(f"random action {action} from {actions}")
         return action
+
+
+def encode_board(x, p):
+    # print("x:", x.shape)
+    # x should be a 3x3 board
+    # channel encode it!
+    no = (x == 0).float()
+    xs = (x == 1).float()
+    os = (x == 2).float()
+    # normalize the board so that the player and opponent are always the same
+    if p == 1:
+        board = torch.cat([no, xs, os], dim=1)
+    elif p == 2:
+        board = torch.cat([no, os, xs], dim=1)
+    else:
+        raise InvalidPlayerException()
+    return board
 
 
 if __name__ == "__main__":
     train(2000)
+    plt.savefig("Figure_1.png", bbox_inches="tight")
+    plt.show()
