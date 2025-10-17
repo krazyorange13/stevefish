@@ -267,9 +267,9 @@ def step(env: Environment, memory: ReplayMemory, analysis: Analysis):
         reward = reward_opp * -1
 
     memory.push(state, torch.tensor([[action]]), torch.tensor([reward]), next_state)
-    analysis.push(reward)
 
     if done or done_opp:
+        analysis.push(reward)
         return True
 
     return False
