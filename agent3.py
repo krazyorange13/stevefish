@@ -56,7 +56,7 @@ class Analysis:
         # self.ax.autoscale(enable=True, axis="y", tight=True)
         # https://xkcd.com/color/rgb/
         self.line_lose = self.ax.plot([], [], color="xkcd:blood red", lw=1)[0]
-        self.line_draw = self.ax.plot([], [], color="xkcd:greyish green", lw=1)[0]
+        self.line_draw = self.ax.plot([], [], color="xkcd:slate", lw=1)[0]
         self.line_win = self.ax.plot([], [], color="xkcd:kelly green", lw=1)[0]
 
     def push(self, reward):
