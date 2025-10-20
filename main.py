@@ -163,6 +163,10 @@ class ChessGame:
             )
             total_training_reward += training_reward
 
+
+        final_reward = self.agent1.force_train()
+        total_training_reward += final_reward
+
         print("Game reward Agent 1 (White):", total_training_reward)
         print("Game reward Agent 2 (Black):", game_reward_agent2)
 

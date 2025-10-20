@@ -12,12 +12,16 @@ class Agent():
         self.board = chess.Board()
         self.model = Model().to(device)
         self.color = color
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0005, weight_decay=0.01, betas=(0.9, 0.999))
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0005, weight_decay=0.001)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
         self.criterion = nn.MSELoss()
         self.epsilon = 1.0
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.05
         self.discount = 0.9
+
+        self.batch_size = 32
+        self.training_buffer = []
 
     def printBoard(self, board):
         board = board.unicode()
@@ -95,56 +99,144 @@ class Agent():
                 
             return random.choice(legal_moves), 0.0
         
-        # get max q val for each legal move
+        # get worst q val for each legal move for the enemy
         best_move = None
-        best_value = -float('inf')
+        worst_value = float('inf')
         for move in legal_moves:
             # apply move temporarily
             self.board.push(move)
-            board_tensor = self.board_to_tensor(self.board).unsqueeze(0)
+            opp_color = not self.color
+            board_tensor = self.board_to_tensor(self.board, color=opp_color).unsqueeze(0)
 
-            # foward pass to get q value for each legal move
             with torch.no_grad():
                 value = self.model.forward(board_tensor).item()
 
-            # update best move
-            if value > best_value:
-                best_value = value
+            # update best move (worst state for opponent)
+            if value < worst_value:
+                worst_value = value
                 best_move = move
 
             # undo move
             self.board.pop()
 
-        return best_move, best_value
+        # # get max q val for each legal move
+        # best_move = None
+        # best_value = -float('inf')
+        # for move in legal_moves:
+        #     # apply move temporarily
+        #     self.board.push(move)
+        #     board_tensor = self.board_to_tensor(self.board).unsqueeze(0)
+
+        #     # foward pass to get q value for each legal move
+        #     with torch.no_grad():
+        #         value = self.model.forward(board_tensor).item()
+
+        #     # update best move
+        #     if value > best_value:
+        #         best_value = value
+        #         best_move = move
+
+        #     # undo move
+        #     self.board.pop()
+
+        # return best_move, best_value
+
+        return best_move, worst_value
     
 
     
     def train_step(self, move, old_board, new_board, reward, value, opponent_reward=0):
-        # get tensor of old board
-        old_board_state = self.board_to_tensor(old_board).unsqueeze(0)
+        # # get tensor of old board
+        # old_board_state = self.board_to_tensor(old_board).unsqueeze(0)
         
-        with torch.no_grad():
-            if new_board.is_game_over():
-                target_q = reward - opponent_reward
-            else:
-                # next_board_state = self.board_to_tensor(self.board).unsqueeze(0)
-                next_board_state = self.board_to_tensor(new_board).unsqueeze(0)
-                next_max_q = self.model(next_board_state).item()
-                target_q = (reward - opponent_reward) + self.discount * next_max_q
+        # with torch.no_grad():
+        #     if new_board.is_game_over():
+        #         target_q = reward - opponent_reward
+        #     else:
+        #         # next_board_state = self.board_to_tensor(self.board).unsqueeze(0)
+        #         next_board_state = self.board_to_tensor(new_board).unsqueeze(0)
+        #         next_max_q = self.model(next_board_state).item()
+        #         target_q = (reward - opponent_reward) + self.discount * next_max_q
 
-        predicted_q = self.model.forward(old_board_state)
-        target_q = torch.tensor([[target_q]], dtype=torch.float32, device=device)
+        # predicted_q = self.model.forward(old_board_state)
+        # target_q = torch.tensor([[target_q]], dtype=torch.float32, device=device)
 
-        # Update model
+        # # Update model
+        # self.optimizer.zero_grad()
+        # loss = self.criterion(predicted_q, target_q)
+        # loss.backward()
+        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        # self.optimizer.step()
+
+        # return reward - opponent_reward
+
+        self.training_buffer.append({
+            'move': move,
+            'old_board': old_board,
+            'new_board': new_board,
+            'reward': reward,
+            'value': value,
+            'opponent_reward': opponent_reward
+        })
+
+        if len(self.training_buffer) >= self.batch_size:
+            return self.train_batch()
+        
+        return 0
+    
+    def train_batch(self):
+        if len(self.training_buffer) == 0:
+            return 0
+        
+        old_states = []
+        targets = []
+        total_reward = 0
+
+        for sample in self.training_buffer:
+            # Convert position to tensor
+            old_board_state = self.board_to_tensor(sample['old_board'])
+            old_states.append(old_board_state)
+            
+            # Calculate target Q-value
+            with torch.no_grad():
+                if sample['new_board'].is_game_over():
+                    target_q = sample['reward'] - sample['opponent_reward']
+                else:
+                    next_state = self.board_to_tensor(sample['new_board']).unsqueeze(0)
+                    next_max_q = self.model(next_state).item()
+                    target_q = (sample['reward'] - sample['opponent_reward']) + self.discount * next_max_q
+            
+            targets.append(target_q)
+            total_reward += sample['reward'] - sample['opponent_reward']
+
+        # Convert to batch tensors
+        old_states_batch = torch.stack(old_states)
+        targets_batch = torch.tensor(targets, dtype=torch.float32, device=device).unsqueeze(1)
+        
+        # Train on entire batch at once
+        predicted_qs = self.model(old_states_batch)
+        
         self.optimizer.zero_grad()
-        loss = self.criterion(predicted_q, target_q)
+        loss = self.criterion(predicted_qs, targets_batch)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
+        self.scheduler.step()
+        
+        # Clear buffer for next batch
+        self.training_buffer.clear()
+        
+        return total_reward
+    
+    def force_train(self):
+        if len(self.training_buffer) > 0:
+            return self.train_batch()
+        return 0
 
-        return reward - opponent_reward
+    def getReward(self, old_state, new_state, move, color=None):
+        if color is None:
+            color = self.color
 
-    def getReward(self, old_state, new_state, move):
         reward = 0
 
         piece_values = {
@@ -157,7 +249,7 @@ class Agent():
         }
 
         if (new_state.is_checkmate()):
-            if new_state.turn != self.color:
+            if new_state.turn != color:
                 reward += 100000 # goood boyyyyy
             else:
                 reward -= 100000
@@ -174,13 +266,13 @@ class Agent():
             reward += piece_value
 
             # extra bonus if the captured piece was hanging (not defended)
-            if not old_state.is_attacked_by(not self.color, move.to_square):
+            if not old_state.is_attacked_by(not color, move.to_square):
                 reward += piece_value * 2.0
 
         # penalty for hanging its own pieces
         our_piece = new_state.piece_at(move.to_square)
-        if our_piece and new_state.is_attacked_by(not self.color, move.to_square):
-            if not new_state.is_attacked_by(self.color, move.to_square):
+        if our_piece and new_state.is_attacked_by(not color, move.to_square):
+            if not new_state.is_attacked_by(color, move.to_square):
                 reward -= piece_values.get(our_piece.piece_type, 0) * 0.8
     
 
@@ -284,15 +376,16 @@ class Model(nn.Module):
         self.fc4 = nn.Linear(128, 64)
         self.fc5 = nn.Linear(64, 1)
         self.relu = nn.ReLU()
+        self.swish = nn.SiLU()
         self.dropout = nn.Dropout(p=0.1)
 
     def forward(self, x):
-        x = self.relu(self.fc1(x))
+        x = self.swish(self.fc1(x))
         x = self.dropout(x)
-        x = self.relu(self.fc2(x))
+        x = self.swish(self.fc2(x))
         x = self.dropout(x)
-        x = self.relu(self.fc3(x))
-        x = self.relu(self.fc4(x))
+        x = self.swish(self.fc3(x))
+        x = self.swish(self.fc4(x))
         x = self.fc5(x)
         return x
     
