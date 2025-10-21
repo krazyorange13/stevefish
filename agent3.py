@@ -65,7 +65,7 @@ class Analysis:
         counter = Counter(self.recent_rewards)
         total = len(self.recent_rewards)
         self.percentages_lose.append(counter[-1] / total)
-        self.percentages_draw.append(counter[0] / total)
+        self.percentages_draw.append(counter[0.5] / total)
         self.percentages_win.append(counter[1] / total)
 
     def monitor(self):
@@ -142,7 +142,7 @@ class Environment:
             reward = -1
         elif self.game.get_draw():
             # draws are good too :) but we'll do neutral for now
-            reward = 0
+            reward = 0.5
         else:
             reward = 0
 
@@ -157,26 +157,22 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         self.flatten = nn.Flatten(0)
         self.layers = nn.Sequential(
-            nn.Linear(DQN.N_OBSERVATIONS, 128),
+            nn.Linear(DQN.N_OBSERVATIONS, 64),
             nn.ReLU(),
-            nn.Linear(128, 128),
+            nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(128, 128),
+            nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, DQN.N_ACTIONS),
+            nn.Linear(64, DQN.N_ACTIONS),
         )
 
     def forward(self, x):
         return self.layers(x)
 
 
-BATCH_SIZE = 128
+BATCH_SIZE = 512
 GAMMA = 0.99
-EPS_START = 0.9
+EPS_START = 0.99
 EPS_END = 0.01
 EPS_DECAY = 2500
 TAU = 0.005
@@ -197,7 +193,7 @@ rewards_run = deque()
 def train(n_episodes):
     print("start")
     optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
-    memory = ReplayMemory(10000)
+    memory = ReplayMemory(100000)
     analysis = Analysis()  # watch rewards as training progresses
 
     for episode_i in range(n_episodes):
@@ -264,7 +260,10 @@ def step(env: Environment, memory: ReplayMemory, analysis: Analysis):
         next_state = next_state_opp
 
         # win if opp lost or lose if opp won
-        reward = reward_opp * -1
+        if abs(reward_opp) == 1:
+            reward = reward_opp * -1
+        else:
+            reward = reward_opp
 
     memory.push(state, torch.tensor([[action]]), torch.tensor([reward]), next_state)
 
@@ -404,6 +403,7 @@ def encode_board(x, p):
 
 
 if __name__ == "__main__":
-    train(2000)
+    train(200000)
+    torch.save(policy_net.state_dict(), "ttt_200000.pth")
     plt.savefig("Figure_1.png", bbox_inches="tight")
     plt.show()
