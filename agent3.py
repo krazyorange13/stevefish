@@ -1,7 +1,10 @@
 # tic tac toe rl self-play agent
 
+import sys
 import math
 import random
+
+from datetime import datetime
 
 from collections import namedtuple, deque, Counter
 from itertools import count
@@ -65,7 +68,7 @@ class Analysis:
         counter = Counter(self.recent_rewards)
         total = len(self.recent_rewards)
         self.percentages_lose.append(counter[-1] / total)
-        self.percentages_draw.append(counter[0.5] / total)
+        self.percentages_draw.append(counter[0.99] / total)
         self.percentages_win.append(counter[1] / total)
 
     def monitor(self):
@@ -142,7 +145,7 @@ class Environment:
             reward = -1
         elif self.game.get_draw():
             # draws are good too :) but we'll do neutral for now
-            reward = 0.5
+            reward = 0.99
         else:
             reward = 0
 
@@ -180,21 +183,12 @@ LR = 3e-4
 
 eps_steps = 0
 
-policy_net = DQN().to(device)
-target_net = DQN().to(device)
-target_net.load_state_dict(policy_net.state_dict())
-
-rewards_run = deque()
-
 
 # https://medium.com/data-science/reinforcement-learning-explained-visually-part-5-deep-q-networks-step-by-step-5a5317197f4b
 # https://docs.pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
 # https://miro.medium.com/v2/resize:fit:1100/format:webp/1*ibWj_Ym7JWhz551PrHTUkA.png
 def train(n_episodes):
     print("start")
-    optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
-    memory = ReplayMemory(100000)
-    analysis = Analysis()  # watch rewards as training progresses
 
     for episode_i in range(n_episodes):
         # set up environment
@@ -222,7 +216,7 @@ def train(n_episodes):
         analysis.monitor()
 
     print()
-    print("stop")
+    print("finish")
 
 
 def first_step(env: Environment):
@@ -403,7 +397,48 @@ def encode_board(x, p):
 
 
 if __name__ == "__main__":
-    train(200000)
-    torch.save(policy_net.state_dict(), "ttt_200000.pth")
+    policy_net = DQN().to(device)
+    target_net = DQN().to(device)
+
+    target_net.load_state_dict(policy_net.state_dict())
+
+    optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
+    memory = ReplayMemory(100000)
+    analysis = Analysis()  # watch rewards as training progresses
+
+    try:
+        load_path = sys.argv[sys.argv.index("--load") + 1]
+        print(f"load {load_path}")
+        checkpoint = torch.load(load_path, weights_only=True)
+        policy_net.load_state_dict(checkpoint["policy_net_state_dict"])
+        target_net.load_state_dict(policy_net.state_dict())
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        eps_steps = checkpoint["eps_steps"]
+        policy_net.train()
+    except (ValueError, IndexError):
+        pass
+
+    try:
+        save_path = sys.argv[sys.argv.index("--save") + 1]
+    except (ValueError, IndexError):
+        save_path = None
+
+    try:
+        train(200000)
+    except KeyboardInterrupt:
+        print("\ncancel")
+
+    if save_path is None:
+        save_path = f"ttt_{int(datetime.now().timestamp())}.tar"
+    print(f"save {save_path}")
+    torch.save(
+        {
+            "policy_net_state_dict": policy_net.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "eps_steps": eps_steps,
+        },
+        save_path,
+    )
+
     plt.savefig("Figure_1.png", bbox_inches="tight")
     plt.show()
