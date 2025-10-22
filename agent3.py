@@ -67,8 +67,8 @@ class Analysis:
         self.steps += 1
         counter = Counter(self.recent_rewards)
         total = len(self.recent_rewards)
-        self.percentages_lose.append(counter[-1] / total)
-        self.percentages_draw.append(counter[0.99] / total)
+        self.percentages_lose.append(counter[-1.2] / total)
+        self.percentages_draw.append(counter[0.8] / total)
         self.percentages_win.append(counter[1] / total)
 
     def monitor(self):
@@ -142,10 +142,10 @@ class Environment:
             # any potential wins NEXT TURN (so the opponent)?
             # either we will lose, or the opponent will blunder and we can keep going,
             # but either way we want to give negative reward
-            reward = -1
+            reward = -1.2
         elif self.game.get_draw():
             # draws are good too :) but we'll do neutral for now
-            reward = 0.99
+            reward = 0.8
         else:
             reward = 0
 
@@ -161,11 +161,11 @@ class DQN(nn.Module):
         self.flatten = nn.Flatten(0)
         self.layers = nn.Sequential(
             nn.Linear(DQN.N_OBSERVATIONS, 64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(64, 64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(64, 64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(64, DQN.N_ACTIONS),
         )
 
@@ -412,7 +412,7 @@ if __name__ == "__main__":
         checkpoint = torch.load(load_path, weights_only=True)
         policy_net.load_state_dict(checkpoint["policy_net_state_dict"])
         target_net.load_state_dict(policy_net.state_dict())
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         eps_steps = checkpoint["eps_steps"]
         policy_net.train()
     except (ValueError, IndexError):
@@ -424,7 +424,7 @@ if __name__ == "__main__":
         save_path = None
 
     try:
-        train(200000)
+        train(1000000)  # 1 million games
     except KeyboardInterrupt:
         print("\ncancel")
 
