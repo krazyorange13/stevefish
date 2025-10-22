@@ -67,8 +67,8 @@ class Analysis:
         self.steps += 1
         counter = Counter(self.recent_rewards)
         total = len(self.recent_rewards)
-        self.percentages_lose.append(counter[-1.2] / total)
-        self.percentages_draw.append(counter[0.8] / total)
+        self.percentages_lose.append(counter[-1] / total)
+        self.percentages_draw.append(counter[0.9] / total)
         self.percentages_win.append(counter[1] / total)
 
     def monitor(self):
@@ -142,10 +142,10 @@ class Environment:
             # any potential wins NEXT TURN (so the opponent)?
             # either we will lose, or the opponent will blunder and we can keep going,
             # but either way we want to give negative reward
-            reward = -1.2
+            reward = -1
         elif self.game.get_draw():
             # draws are good too :) but we'll do neutral for now
-            reward = 0.8
+            reward = 0.9
         else:
             reward = 0
 
