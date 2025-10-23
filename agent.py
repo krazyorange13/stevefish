@@ -2,6 +2,7 @@ import chess
 import torch
 import torch.nn as nn
 import random
+import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -12,16 +13,26 @@ class Agent():
         self.board = chess.Board()
         self.model = Model().to(device)
         self.color = color
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0005, weight_decay=0.001)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
-        self.criterion = nn.MSELoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0001, weight_decay=0.001)
+        # self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
+        self.criterion = nn.SmoothL1Loss()
         self.epsilon = 1.0
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.05
-        self.discount = 0.9
+        self.discount = 0.5
 
         self.batch_size = 32
         self.training_buffer = []
+
+        self.losses = []
+
+        self.q_value_stats = {
+            'predicted_mean': [],
+            'target_mean': []
+        }
+
+        self.gradient_norms = []
+        self.game_results = []
 
     def printBoard(self, board):
         board = board.unicode()
@@ -215,13 +226,38 @@ class Agent():
         
         # Train on entire batch at once
         predicted_qs = self.model(old_states_batch)
+
+        # Track Q-value statistics
+        pred_values = predicted_qs.detach().cpu().numpy().flatten()
+        target_values = targets_batch.detach().cpu().numpy().flatten()
+        self.q_value_stats['predicted_mean'].append(pred_values.mean())
+        self.q_value_stats['target_mean'].append(target_values.mean())
         
         self.optimizer.zero_grad()
         loss = self.criterion(predicted_qs, targets_batch)
         loss.backward()
+
+        # Track gradient norms (before clipping)
+        total_norm = 0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** (1. / 2)
+        self.gradient_norms.append(total_norm)
+
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        
         self.optimizer.step()
-        self.scheduler.step()
+        # self.scheduler.step()
+
+        # add losses to history
+        self.losses.append(loss.item())
+
+        # Add occasional debug output
+        if random.random() < 0.05:  # 5% of batches
+            print(f"Batch - Loss: {loss.item():.3f}, Q-pred: {pred_values.mean():.3f}, Q-target: {target_values.mean():.3f}, Grad: {total_norm:.3f}")
+    
         
         # Clear buffer for next batch
         self.training_buffer.clear()
@@ -240,23 +276,23 @@ class Agent():
         reward = 0
 
         piece_values = {
-            chess.PAWN: 100,
-            chess.ROOK: 500,
-            chess.KNIGHT: 300,
-            chess.BISHOP: 300,
-            chess.QUEEN: 900,
+            chess.PAWN: 1,
+            chess.ROOK: 5,
+            chess.KNIGHT: 3,
+            chess.BISHOP: 3,
+            chess.QUEEN: 9,
             chess.KING: 0
         }
 
         if (new_state.is_checkmate()):
             if new_state.turn != color:
-                reward += 100000 # goood boyyyyy
+                reward += 100 # goood boyyyyy
             else:
-                reward -= 100000
+                reward -= 100
         elif (new_state.is_stalemate() or new_state.is_insufficient_material()
                 or new_state.can_claim_draw() or new_state.can_claim_fifty_moves()
                 or new_state.can_claim_threefold_repetition()):
-                reward -= 100
+                reward -= 1
 
         # Reward for capturing pieces
         captured_piece = old_state.piece_at(move.to_square)
@@ -277,17 +313,107 @@ class Agent():
     
 
         if new_state.is_check():
-            reward += 15
+            reward += 0.15
 
         if move.promotion:
-            reward += 800
+            reward += 8
         
         # smol penalty for each move to encourage faster wins (or losses)
-        reward -= 25
+        reward -= 0.25
 
         return reward
     
+    def log_game_result(self, result):
+        self.game_results.append(result)
+        # Keep only last 50 games for win rate calculation
+        if len(self.game_results) > 50:
+            self.game_results.pop(0)
+
+    def get_win_rate(self):
+        if len(self.game_results) == 0:
+            return 0.0
+        wins = self.game_results.count("1-0")
+        return wins / len(self.game_results)
+    
+    def plot_losses(self):
+        # print average loss and stuff
+        avg_loss = sum(self.losses) / len(self.losses)
+        print(f"Average Training Loss: {avg_loss:.4f}")
+        print(f"Total Batch Steps: {len(self.losses)}")
+        print(f"Current Epsilon: {self.epsilon:.4f}")
+        print(f"Current Win Rate: {self.get_win_rate():.2%}")
+
+        plt.figure(figsize=(15, 5))
+
+        # display losses graph at this point
+        plt.subplot(2, 3, 1)
+        plt.plot(self.losses)
+        plt.title("Training Loss Over Time")
+        plt.xlabel("Batches")
+        plt.ylabel("Loss")
+        
+        # Moving average
+        plt.subplot(2, 3, 2)
+        window = 20
+        smoothed = [sum(self.losses[max(0, i-window):i+1])/min(i+1, window) 
+                   for i in range(len(self.losses))]
+        plt.plot(smoothed, label='Smoothed Loss')
+        plt.title("Smoothed Training Loss Over Time")
+        plt.xlabel("Batches")
+        plt.ylabel("Smoothed Loss")
+        
+        # latest trend of losses
+        plt.subplot(2, 3, 3)
+        if (len(smoothed) < 50):
+            plt.plot(smoothed)
+        else:
+            plt.plot(smoothed[-50:])
+        plt.title("Recent Loss Trend")
+        plt.xlabel("Recent Batches")
+        plt.ylabel("Smoothed Loss")
+
+        # Q-values
+        plt.subplot(2, 3, 4)
+        if len(self.q_value_stats['predicted_mean']) > 0:
+            plt.plot(self.q_value_stats['predicted_mean'], label='Predicted Q', alpha=0.8)
+            plt.plot(self.q_value_stats['target_mean'], label='Target Q', alpha=0.8)
+            plt.title("Q-Value Means")
+            plt.xlabel("Batches")
+            plt.ylabel("Q-Value")
+            plt.legend()
+
+        # win rate
+        plt.subplot(2, 3, 5)
+        if len(self.game_results) > 0:
+            # calculate rolling win rate over time
+            win_rates = []
+            for i in range(1, len(self.game_results) + 1):
+                recent_games = self.game_results[:i]
+                wins = recent_games.count('1-0')
+                win_rate = wins / len(recent_games)
+                win_rates.append(win_rate)
+            
+            plt.plot(win_rates, color='purple')
+            plt.title("Win Rate Over Time")
+            plt.xlabel("Games")
+            plt.ylabel("Win Rate")
+            plt.ylim(0, 1)
+
+        # gradient norms
+        plt.subplot(2, 3, 6)
+        if len(self.gradient_norms) > 0:
+            plt.plot(self.gradient_norms, alpha=0.7, color='orange')
+            plt.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, label='Clip Threshold')
+            plt.title("Gradient Norms")
+            plt.xlabel("Batches")
+            plt.ylabel("Gradient Norm")
+            plt.legend()
+
+        plt.tight_layout()
+        plt.show()
+    
     def play_test_game(self, opponent_agent=None):
+
         print("\n" + "="*40)
         print("STARTING TEST GAME")
         print("="*40)
@@ -370,22 +496,20 @@ class Agent():
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
-        self.fc1 = nn.Linear(128, 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 128)
-        self.fc4 = nn.Linear(128, 64)
-        self.fc5 = nn.Linear(64, 1)
-        self.relu = nn.ReLU()
-        self.swish = nn.SiLU()
-        self.dropout = nn.Dropout(p=0.1)
+        self.layers = nn.Sequential(
+            nn.Linear(128, 256),
+            nn.SiLU(),
+            nn.Dropout(p=0.1),
+            nn.Linear(256, 256),
+            nn.SiLU(),
+            nn.Dropout(p=0.1),
+            nn.Linear(256, 128),
+            nn.SiLU(),
+            nn.Linear(128, 64),
+            nn.SiLU(),
+            nn.Linear(64, 1)
+        )
 
     def forward(self, x):
-        x = self.swish(self.fc1(x))
-        x = self.dropout(x)
-        x = self.swish(self.fc2(x))
-        x = self.dropout(x)
-        x = self.swish(self.fc3(x))
-        x = self.swish(self.fc4(x))
-        x = self.fc5(x)
-        return x
+        return self.layers(x)
     

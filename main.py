@@ -25,6 +25,7 @@ class ChessGame:
         print("1. Test current model (play game against itself)")
         print("2. Continue training")
         print("3. Save model and exit")
+        print("4. Show training loss graph")
         print("="*50)
         
         while True:
@@ -37,6 +38,7 @@ class ChessGame:
                 print("1. Test again")
                 print("2. Continue training") 
                 print("3. Save model and exit")
+                print("4. Show training loss graph")
                 
             elif choice == '2':
                 print("Resuming training...")
@@ -45,13 +47,18 @@ class ChessGame:
             elif choice == '3':
                 self.save_and_exit()
 
+            elif choice == '4':
+                # display losses and stuff and graphs
+                self.agent1.plot_losses()
+                break
+
             elif choice.lower() == 'stfu':
                 # exit without saving
                 print("No u")
                 sys.exit(0)
                 
             else:
-                print("Invalid choice. Please enter 1, 2, or 3 or STFU.")
+                print("Invalid choice. Please enter 1, 2, 3, or 4 (or STFU).")
 
     def save_and_exit(self):
         torch.save(self.agent1.model.state_dict(), f'chess_model_game_{self.current_game}.pth')
@@ -65,6 +72,7 @@ class ChessGame:
 
     def copy_agent1_to_agent2(self):
         self.agent2.model.load_state_dict(self.agent1.model.state_dict())
+        self.agent2.epsilon = 0.1
         print("Copied Agent 1's model to Agent 2.")
 
     def run_one_game(self, show_board=False):
@@ -146,6 +154,7 @@ class ChessGame:
             })
         
         print("result:", self.board.result())
+        self.agent1.log_game_result(self.board.result())
 
         print(f"Training on {len(self.training_memory)} moves from this game...")
         
