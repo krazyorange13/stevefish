@@ -82,6 +82,9 @@ class ResultTracker:
         self.line_lose.set_xdata(np.arange(self.steps))
         self.line_lose.set_ydata(self.percs_lose)
 
+    def get_lines(self):
+        return [self.line_win, self.line_draw, self.line_lose]
+
 
 class AverageTracker:
     def __init__(self, run_len, ax, alpha=1.0):
@@ -100,6 +103,9 @@ class AverageTracker:
     def monitor(self):
         self.line_results.set_xdata(np.arange(self.steps))
         self.line_results.set_ydata(self.results)
+
+    def get_lines(self):
+        return [self.line_results]
 
 
 class MinMaxTracker:
@@ -121,6 +127,16 @@ class Analysis:
         self.losses_ax = self.axs[2]
         self.games_ax.set_ylim(0, 1)
         self.games_random_ax.set_ylim(0, 1)
+
+        plt.show(block=False)
+        self.fig.show()
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+        self.last_fig_size = self.fig.get_size_inches().copy()
+        self.fig_size = self.fig.get_size_inches().copy()
+
+        self.steps = 0
 
         # keep track of everything
         # adjusting maxlen here will change smoothness of the graph
@@ -146,6 +162,39 @@ class Analysis:
         self.losses_minmax.push(loss)
 
     def monitor(self):
+        # self.fig_size = self.fig.get_size_inches()
+        # if (
+        #     not np.allclose(self.fig_size, self.last_fig_size)
+        # ):
+        if self.steps % 100 == 0 and True:
+            self.games_ax.clear()
+            self.games_random_ax.clear()
+            self.losses_ax.clear()
+
+            # set limits
+
+            if self.games_noisy.steps > 0:
+                self.games_ax.set_xlim(0, self.games_noisy.steps)
+
+            if self.games_random_noisy.steps > 0:
+                self.games_random_ax.set_xlim(0, self.games_random_noisy.steps)
+
+            if self.losses_noisy.steps > 0:
+                self.losses_ax.set_ylim(self.losses_minmax.min, self.losses_minmax.max)
+                self.losses_ax.set_xlim(0, self.losses_noisy.steps)
+
+            self.fig.canvas.draw()
+
+            self.games_ax_bg = self.fig.canvas.copy_from_bbox(self.games_ax.bbox)  # type: ignore
+            self.games_random_ax_bg = self.fig.canvas.copy_from_bbox(  # type: ignore
+                self.games_random_ax.bbox
+            )
+            self.losses_ax_bg = self.fig.canvas.copy_from_bbox(self.losses_ax.bbox)  # type: ignore
+
+            # self.last_fig_size = self.fig_size.copy()
+
+        self.steps += 1
+
         self.games_noisy.monitor()
         self.games_smooth.monitor()
         self.games_random_noisy.monitor()
@@ -163,8 +212,37 @@ class Analysis:
             self.losses_ax.set_ylim(self.losses_minmax.min, self.losses_minmax.max)
             self.losses_ax.set_xlim(0, self.losses_noisy.steps)
 
-        plt.draw()
-        plt.pause(0.05)
+        self.fig.canvas.restore_region(self.games_ax_bg)  # type: ignore
+        for line in self.games_noisy.get_lines() + self.games_smooth.get_lines():
+            self.games_ax.draw_artist(line)
+        self.fig.canvas.blit(self.games_ax.bbox)
+
+        self.fig.canvas.restore_region(self.games_random_ax_bg)  # type: ignore
+        for line in (
+            self.games_random_noisy.get_lines() + self.games_random_smooth.get_lines()
+        ):
+            self.games_random_ax.draw_artist(line)
+        self.fig.canvas.blit(self.games_random_ax.bbox)
+
+        self.fig.canvas.restore_region(self.losses_ax_bg)  # type: ignore
+        for line in self.losses_noisy.get_lines() + self.losses_smooth.get_lines():
+            self.games_ax.draw_artist(line)
+        self.fig.canvas.blit(self.losses_ax.bbox)
+
+        self.fig.canvas.flush_events()
+
+        if self.steps % 100 == 1 and False:
+            self.games_ax.clear()
+            self.games_random_ax.clear()
+            self.losses_ax.clear()
+            self.games_ax_bg = self.fig.canvas.copy_from_bbox(self.games_ax.bbox)
+            self.games_random_ax_bg = self.fig.canvas.copy_from_bbox(
+                self.games_random_ax.bbox
+            )
+            self.losses_ax_bg = self.fig.canvas.copy_from_bbox(self.losses_ax.bbox)
+            self.fig.canvas.draw()
+            # plt.draw()
+        # plt.pause(0.05)
 
 
 class IllegalMoveException(Exception):
