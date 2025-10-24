@@ -17,9 +17,9 @@ class Agent():
         # self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
         self.criterion = nn.SmoothL1Loss()
         self.epsilon = 1.0
-        self.epsilon_decay = 0.995
+        self.epsilon_decay = 0.999
         self.epsilon_min = 0.05
-        self.discount = 0.5
+        self.discount = 0.75
 
         self.batch_size = 32
         self.training_buffer = []
@@ -33,6 +33,9 @@ class Agent():
 
         self.gradient_norms = []
         self.game_results = []
+
+        self.moves_per_game = []
+        self.current_game_moves = 0
 
     def printBoard(self, board):
         board = board.unicode()
@@ -82,6 +85,10 @@ class Agent():
                 attacks -= 1
             board_tensor[64 + square] = attacks
 
+        # extra for legal moves and check status
+        # board_tensor[128+1] = board.legal_moves
+        # board_tensor[128+2] = board.is_check()
+
         return board_tensor
     
     def get_best_move_and_val(self):
@@ -94,7 +101,7 @@ class Agent():
         if random.random() < self.epsilon:
             rand = random.random()
 
-            if rand < 0.6:
+            if rand < 0.4:
                 # capture any piece possilbe
                 capture_moves = [move for move in legal_moves if self.board.is_capture(move)]
                 if capture_moves:
@@ -301,15 +308,15 @@ class Agent():
             piece_value = piece_values.get(captured_piece.piece_type, 0)
             reward += piece_value
 
-            # extra bonus if the captured piece was hanging (not defended)
-            if not old_state.is_attacked_by(not color, move.to_square):
-                reward += piece_value * 2.0
+            # # extra bonus if the captured piece was hanging (not defended)
+            # if not old_state.is_attacked_by(not color, move.to_square):
+            #     reward += piece_value * 2.0
 
-        # penalty for hanging its own pieces
-        our_piece = new_state.piece_at(move.to_square)
-        if our_piece and new_state.is_attacked_by(not color, move.to_square):
-            if not new_state.is_attacked_by(color, move.to_square):
-                reward -= piece_values.get(our_piece.piece_type, 0) * 0.8
+        # # penalty for hanging its own pieces
+        # our_piece = new_state.piece_at(move.to_square)
+        # if our_piece and new_state.is_attacked_by(not color, move.to_square):
+        #     if not new_state.is_attacked_by(color, move.to_square):
+        #         reward -= piece_values.get(our_piece.piece_type, 0) * 0.8
     
 
         if new_state.is_check():
@@ -319,21 +326,19 @@ class Agent():
             reward += 8
         
         # smol penalty for each move to encourage faster wins (or losses)
-        reward -= 0.25
+        reward -= 0.05
 
         return reward
     
     def log_game_result(self, result):
         self.game_results.append(result)
-        # Keep only last 50 games for win rate calculation
-        if len(self.game_results) > 50:
-            self.game_results.pop(0)
 
     def get_win_rate(self):
         if len(self.game_results) == 0:
             return 0.0
         wins = self.game_results.count("1-0")
-        return wins / len(self.game_results)
+        draws = self.game_results.count("1/2-1/2")
+        return wins / len(self.game_results), draws / len(self.game_results)
     
     def plot_losses(self):
         # print average loss and stuff
@@ -341,29 +346,38 @@ class Agent():
         print(f"Average Training Loss: {avg_loss:.4f}")
         print(f"Total Batch Steps: {len(self.losses)}")
         print(f"Current Epsilon: {self.epsilon:.4f}")
-        print(f"Current Win Rate: {self.get_win_rate():.2%}")
+        win_rate, draw_rate = self.get_win_rate()
+        print(f"Current Win Rate: {win_rate:.2%}, Draw Rate: {draw_rate:.2%}")
+        print(f"Total Games Played: {len(self.game_results)}")
 
-        plt.figure(figsize=(15, 5))
+        plt.figure(figsize=(18, 10))
 
         # display losses graph at this point
-        plt.subplot(2, 3, 1)
+        plt.subplot(3, 3, 1)
         plt.plot(self.losses)
+        plt.axhline(y=avg_loss, color='red', linestyle='--', alpha=0.7, label='Average Loss')
+        plt.legend()
         plt.title("Training Loss Over Time")
         plt.xlabel("Batches")
         plt.ylabel("Loss")
         
         # Moving average
-        plt.subplot(2, 3, 2)
+        plt.subplot(3, 3, 2)
         window = 20
         smoothed = [sum(self.losses[max(0, i-window):i+1])/min(i+1, window) 
                    for i in range(len(self.losses))]
+        if smoothed:
+            mean_smoothed = sum(smoothed) / len(smoothed)
+            plt.axhline(y=mean_smoothed, color='red', linestyle='--', alpha=0.7, 
+                    label='Average Smoothed Loss')
         plt.plot(smoothed, label='Smoothed Loss')
         plt.title("Smoothed Training Loss Over Time")
         plt.xlabel("Batches")
         plt.ylabel("Smoothed Loss")
+        plt.legend()
         
         # latest trend of losses
-        plt.subplot(2, 3, 3)
+        plt.subplot(3, 3, 3)
         if (len(smoothed) < 50):
             plt.plot(smoothed)
         else:
@@ -373,40 +387,84 @@ class Agent():
         plt.ylabel("Smoothed Loss")
 
         # Q-values
-        plt.subplot(2, 3, 4)
+        plt.subplot(3, 3, 4)
         if len(self.q_value_stats['predicted_mean']) > 0:
-            plt.plot(self.q_value_stats['predicted_mean'], label='Predicted Q', alpha=0.8)
-            plt.plot(self.q_value_stats['target_mean'], label='Target Q', alpha=0.8)
+            pred_means = self.q_value_stats['predicted_mean']
+            target_means = self.q_value_stats['target_mean']
+
+            # Calculate differences
+            q_differences = [abs(p - t) for p, t in zip(pred_means, target_means)]
+
+
+            plt.plot(pred_means, label='Predicted Q', alpha=0.8)
+            plt.plot(target_means, label='Target Q', alpha=0.8)
+            plt.plot(q_differences, label='|Pred - Target|', alpha=0.8, color='red')
+            
+            # Add mean lines
+            mean_pred = sum(pred_means) / len(pred_means)
+            mean_target = sum(target_means) / len(target_means)
+            
+            plt.axhline(y=mean_pred, color='blue', linestyle='--', alpha=0.7, 
+                    label=f'Pred Mean: {mean_pred:.1f}')
+            plt.axhline(y=mean_target, color='orange', linestyle='--', alpha=0.7, 
+                    label=f'Target Mean: {mean_target:.1f}')
+            
             plt.title("Q-Value Means")
             plt.xlabel("Batches")
             plt.ylabel("Q-Value")
             plt.legend()
 
         # win rate
-        plt.subplot(2, 3, 5)
-        if len(self.game_results) > 0:
+        plt.subplot(3, 3, 5)
+        if len(self.game_results) > 50:
             # calculate rolling win rate over time
+            interval = 50
+            half_interval = interval // 2
             win_rates = []
-            for i in range(1, len(self.game_results) + 1):
-                recent_games = self.game_results[:i]
+            game_numbers = []
+            for i in range(half_interval, len(self.game_results) - half_interval):
+                recent_games = self.game_results[i-half_interval:i+half_interval]
                 wins = recent_games.count('1-0')
                 win_rate = wins / len(recent_games)
                 win_rates.append(win_rate)
+                game_numbers.append(i + 1)
             
-            plt.plot(win_rates, color='purple')
+            plt.plot(game_numbers, win_rates, color='purple')
+            plt.axhline(y=0.5, color='red', linestyle='--', alpha=0.7, label='50% Win Rate')
             plt.title("Win Rate Over Time")
             plt.xlabel("Games")
             plt.ylabel("Win Rate")
             plt.ylim(0, 1)
 
         # gradient norms
-        plt.subplot(2, 3, 6)
+        plt.subplot(3, 3, 6)
         if len(self.gradient_norms) > 0:
             plt.plot(self.gradient_norms, alpha=0.7, color='orange')
+
+            # Add mean gradient norm line
+            mean_grad = sum(self.gradient_norms) / len(self.gradient_norms)
+            plt.axhline(y=mean_grad, color='red', linestyle='--', alpha=0.7, 
+                    label=f'Mean: {mean_grad:.3f}')
+
             plt.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, label='Clip Threshold')
             plt.title("Gradient Norms")
             plt.xlabel("Batches")
             plt.ylabel("Gradient Norm")
+            plt.legend()
+
+        # Add new subplot for game lengths
+        plt.subplot(3, 3, 7)
+        if len(self.moves_per_game) > 0:
+            plt.plot(self.moves_per_game, 'o-', alpha=0.7, markersize=3)
+            
+            # Add mean line
+            mean_moves = sum(self.moves_per_game) / len(self.moves_per_game)
+            plt.axhline(y=mean_moves, color='red', linestyle='--', alpha=0.7, 
+                    label=f'Mean: {mean_moves:.1f}')
+            
+            plt.title("Game Lengths Over Time")
+            plt.xlabel("Game Number")
+            plt.ylabel("Moves per Game")
             plt.legend()
 
         plt.tight_layout()

@@ -14,7 +14,7 @@ class ChessGame:
         self.current_game = 0
         self.game_reward_agent1 = 0
         self.game_reward_agent2 = 0
-        self.copy_frequency = 50
+        self.copy_frequency = 100
         self.opponent_reward = 0
         self.pending_agent1_training = None
         self.training_memory = []
@@ -29,7 +29,7 @@ class ChessGame:
         print("="*50)
         
         while True:
-            choice = input("Enter choice (1/2/3): ").strip()
+            choice = input("Enter choice (1/2/3/4): ").strip()
             
             if choice == '1':
                 print("Testing current model...")
@@ -80,6 +80,8 @@ class ChessGame:
         game_reward_agent2 = 0
         self.pending_agent1_training = None
 
+        self.agent1.current_game_moves = 0
+
         self.training_memory = []
 
         while not (self.board.is_game_over()):
@@ -99,6 +101,8 @@ class ChessGame:
                     # old_board_state = self.agent1.board_to_tensor(self.board)
 
                     self.board.push(move)
+
+                    self.agent1.current_game_moves += 1
 
                     reward = self.agent1.getReward(old_board, self.board, move)
 
@@ -182,10 +186,14 @@ class ChessGame:
         # reduce epsilon
         self.agent1.epsilon = max(self.agent1.epsilon * self.agent1.epsilon_decay, self.agent1.epsilon_min)
 
+        # record moves per game
+        if self.agent1.current_game_moves > 0:
+            self.agent1.moves_per_game.append(self.agent1.current_game_moves)
+
     def run(self):
         signal.signal(signal.SIGINT, self.signal_handler)
 
-        num_games = 3000
+        num_games = 5000
         
         print("Training started! Press Ctrl+C anytime to pause and test the model.")
         print(f"Training for {num_games} games...")
