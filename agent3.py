@@ -41,57 +41,127 @@ class ReplayMemory:
         return len(self.memory)
 
 
-class Analysis:
-    def __init__(self):
-        # adjusting maxlen here will change smoothness of the graph
-        self.recent_rewards = deque([], maxlen=1000)
+class ResultTracker:
+    # TODO: don't hardcode this
+    WIN = 1
+    DRAW = 0.9
+    LOSS = -1
+
+    def __init__(self, run_len, ax, alpha=1.0):
+        self.results_run = deque([], maxlen=run_len)
         self.steps = 0
+        self.percs_win = []
+        self.percs_draw = []
+        self.percs_lose = []
 
-        self.percentages_lose = []
-        self.percentages_draw = []
-        self.percentages_win = []
-
-        self.fig, self.ax = plt.subplots()
-        # plt.tight_layout()
-        # self.ax.set_xlim(0, 2000)
-        self.ax.set_ylim(0, 1)
-        # self.ax.autoscale(enable=True, axis="x", tight=True)
-        # self.ax.autoscale(enable=True, axis="y", tight=True)
         # https://xkcd.com/color/rgb/
-        self.line_lose = self.ax.plot([], [], color="xkcd:blood red", lw=1)[0]
-        self.line_draw = self.ax.plot([], [], color="xkcd:slate", lw=1)[0]
-        self.line_win = self.ax.plot([], [], color="xkcd:kelly green", lw=1)[0]
+        self.line_lose = ax.plot([], [], color="#ee4488", lw=1)[0]
+        self.line_draw = ax.plot([], [], color="#444488", lw=1)[0]
+        self.line_win = ax.plot([], [], color="#44ee88", lw=1)[0]
+        self.line_lose.set_alpha(alpha)
+        self.line_draw.set_alpha(alpha)
+        self.line_win.set_alpha(alpha)
 
-    def push(self, reward):
-        self.recent_rewards.append(reward)
+    def push(self, result):
         self.steps += 1
-        counter = Counter(self.recent_rewards)
-        total = len(self.recent_rewards)
-        self.percentages_lose.append(counter[-1] / total)
-        self.percentages_draw.append(counter[0.9] / total)
-        self.percentages_win.append(counter[1] / total)
+        self.results_run.append(result)
+        counter = Counter(self.results_run)
+        total = len(self.results_run)
+        perc_win = counter[ResultTracker.WIN] / total
+        perc_draw = counter[ResultTracker.DRAW] / total
+        perc_lose = counter[ResultTracker.LOSS] / total
+        self.percs_win.append(perc_win)
+        self.percs_draw.append(perc_draw)
+        self.percs_lose.append(perc_lose)
 
     def monitor(self):
-        # if self.t < Analysis.RUN:
-        #     return
-        # self.t = 0
-        # counter = Counter(self.rewards)
-        # total = len(self.rewards)
-        # for key, value in sorted(counter.items()):
-        #     percentage = int((value / total) * 100)
-        #     print(f"| {key}\t{percentage:03d}%", end="\t")
-        # print("|")
-
-        self.line_lose.set_xdata(np.arange(self.steps))
-        self.line_lose.set_ydata(self.percentages_lose)
-        self.line_draw.set_xdata(np.arange(self.steps))
-        self.line_draw.set_ydata(self.percentages_draw)
         self.line_win.set_xdata(np.arange(self.steps))
-        self.line_win.set_ydata(self.percentages_win)
+        self.line_win.set_ydata(self.percs_win)
+        self.line_draw.set_xdata(np.arange(self.steps))
+        self.line_draw.set_ydata(self.percs_draw)
+        self.line_lose.set_xdata(np.arange(self.steps))
+        self.line_lose.set_ydata(self.percs_lose)
 
-        self.ax.set_xlim(0, self.steps)
 
-        self.ax.autoscale_view()
+class AverageTracker:
+    def __init__(self, run_len, ax, alpha=1.0):
+        self.results_run = deque([], maxlen=run_len)
+        self.steps = 0
+        self.results = []
+        self.line_results = ax.plot([], [], color="#008888", lw=1)[0]
+        self.line_results.set_alpha(alpha)
+
+    def push(self, result):
+        self.steps += 1
+        self.results_run.append(result)
+        result_avg = sum(self.results_run) / len(self.results_run)
+        self.results.append(result_avg)
+
+    def monitor(self):
+        self.line_results.set_xdata(np.arange(self.steps))
+        self.line_results.set_ydata(self.results)
+
+
+class MinMaxTracker:
+    def __init__(self, start_min, start_max):
+        self.min = start_min
+        self.max = start_max
+
+    def push(self, value):
+        self.min = min(self.min, value)
+        self.max = max(self.max, value)
+
+
+class Analysis:
+    def __init__(self):
+        # matplotlib stuff
+        self.fig, self.axs = plt.subplots(1, 3)
+        self.games_ax = self.axs[0]
+        self.games_random_ax = self.axs[1]
+        self.losses_ax = self.axs[2]
+        self.games_ax.set_ylim(0, 1)
+        self.games_random_ax.set_ylim(0, 1)
+
+        # keep track of everything
+        # adjusting maxlen here will change smoothness of the graph
+        self.games_noisy = ResultTracker(50, self.games_ax, alpha=0.1)
+        self.games_smooth = ResultTracker(1000, self.games_ax)
+        self.games_random_noisy = ResultTracker(10, self.games_random_ax, alpha=0.1)
+        self.games_random_smooth = ResultTracker(100, self.games_random_ax)
+        self.losses_noisy = AverageTracker(1, self.losses_ax, alpha=0.2)
+        self.losses_smooth = AverageTracker(100, self.losses_ax)
+        self.losses_minmax = MinMaxTracker(0, 0)
+
+    def push_reward(self, reward):
+        self.games_noisy.push(reward)
+        self.games_smooth.push(reward)
+
+    def push_random_opp(self, reward):
+        self.games_random_noisy.push(reward)
+        self.games_random_smooth.push(reward)
+
+    def push_loss(self, loss):
+        self.losses_noisy.push(loss)
+        self.losses_smooth.push(loss)
+        self.losses_minmax.push(loss)
+
+    def monitor(self):
+        self.games_noisy.monitor()
+        self.games_smooth.monitor()
+        self.games_random_noisy.monitor()
+        self.games_random_smooth.monitor()
+        self.losses_noisy.monitor()
+        self.losses_smooth.monitor()
+
+        if self.games_noisy.steps > 0:
+            self.games_ax.set_xlim(0, self.games_noisy.steps)
+
+        if self.games_random_noisy.steps > 0:
+            self.games_random_ax.set_xlim(0, self.games_random_noisy.steps)
+
+        if self.losses_noisy.steps > 0:
+            self.losses_ax.set_ylim(self.losses_minmax.min, self.losses_minmax.max)
+            self.losses_ax.set_xlim(0, self.losses_noisy.steps)
 
         plt.draw()
         plt.pause(0.05)
@@ -202,7 +272,7 @@ def train(n_episodes):
             done = step(env, memory, analysis)
 
             # compute loss and optimize networks on random training data
-            optimize(optimizer, memory)
+            optimize(optimizer, memory, analysis)
 
             # update target network toward policy network
             polyak()
@@ -211,8 +281,20 @@ def train(n_episodes):
                 print(end=".", flush=True)
                 break
 
+        # test against random bot
+        if episode_i % 100 == 0:
+            env = Environment(nets=[policy_net, target_net])
+            first_step(env)
+            for step_i in count():
+                done = step(env, memory, analysis, random_opp=True)
+                if done:
+                    break
+
+        # save model checkpoint
+        if episode_i % 10000 == 0:
+            save_checkpoint(episode_i)
+
         # monitor training progress
-        # analysis.push(result)
         analysis.monitor()
 
     print()
@@ -230,13 +312,13 @@ def first_step(env: Environment):
     _, _ = env.step(action, env.target_net_p)
 
 
-def step(env: Environment, memory: ReplayMemory, analysis: Analysis):
-    state = torch.from_numpy(env.game.board.copy()).flatten().unsqueeze(0)
-    state = encode_board(state, env.policy_net_p)
+def step(env: Environment, memory: ReplayMemory, analysis: Analysis, random_opp=False):
+    state_unencoded = torch.from_numpy(env.game.board.copy()).flatten().unsqueeze(0)
+    state = encode_board(state_unencoded, env.policy_net_p)
     raw_state = torch.from_numpy(env.game.board)
     action = greedy_action(state, raw_state, policy_net)
-    reward, next_state = env.step(action, env.policy_net_p)
-    next_state = torch.from_numpy(next_state).flatten().unsqueeze(0)
+    reward, _next_state = env.step(action, env.policy_net_p)
+    next_state_unencoded = torch.from_numpy(_next_state).flatten().unsqueeze(0)
     raw_next_state = torch.from_numpy(env.game.board)
     done = env.game.get_done()
     done_opp = False
@@ -244,13 +326,17 @@ def step(env: Environment, memory: ReplayMemory, analysis: Analysis):
     if done:
         next_state = None
     else:
-        next_state = encode_board(next_state, env.target_net_p)
-        action_opp = greedy_action(next_state, raw_next_state, target_net)
-        reward_opp, next_state_opp = env.step(action_opp, env.target_net_p)
-        next_state_opp = torch.from_numpy(next_state_opp).flatten().unsqueeze(0)
+        next_state = encode_board(next_state_unencoded, env.target_net_p)
+        action_opp = greedy_action(
+            next_state, raw_next_state, target_net, just_random=random_opp
+        )
+        reward_opp, _next_state_opp = env.step(action_opp, env.target_net_p)
+        next_state_opp_unencoded = (
+            torch.from_numpy(_next_state_opp).flatten().unsqueeze(0)
+        )
         done_opp = env.game.get_done()
 
-        next_state_opp = encode_board(next_state_opp, env.policy_net_p)
+        next_state_opp = encode_board(next_state_opp_unencoded, env.policy_net_p)
         next_state = next_state_opp
 
         # win if opp lost or lose if opp won
@@ -259,16 +345,20 @@ def step(env: Environment, memory: ReplayMemory, analysis: Analysis):
         else:
             reward = reward_opp
 
-    memory.push(state, torch.tensor([[action]]), torch.tensor([reward]), next_state)
+    if not random_opp:
+        memory.push(state, torch.tensor([[action]]), torch.tensor([reward]))
 
     if done or done_opp:
-        analysis.push(reward)
+        if not random_opp:
+            analysis.push_reward(reward)
+        else:
+            analysis.push_random_opp(reward)
         return True
 
     return False
 
 
-def optimize(optimizer, memory):
+def optimize(optimizer, memory, analysis):
     if len(memory) < BATCH_SIZE:
         return
 
@@ -330,6 +420,9 @@ def optimize(optimizer, memory):
     # calculate loss
     criterion = nn.SmoothL1Loss()
     loss = criterion(state_q_values, expected_state_q_values)
+
+    analysis.push_loss(loss.item())
+
     # optimize model
     optimizer.zero_grad()
     loss.backward()
@@ -347,7 +440,9 @@ def polyak():
         target_param.data.copy_(TAU * policy_param.data + (1 - TAU) * target_param.data)
 
 
-def greedy_action(state: torch.Tensor, raw_state: torch.Tensor, net: nn.Module):
+def greedy_action(
+    state: torch.Tensor, raw_state: torch.Tensor, net: nn.Module, just_random=False
+):
     global eps_steps
     sample = random.random()
     eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(
@@ -356,7 +451,7 @@ def greedy_action(state: torch.Tensor, raw_state: torch.Tensor, net: nn.Module):
     eps_steps += 1
 
     # if True:
-    if sample > eps_threshold:
+    if sample > eps_threshold and not just_random:
         # use net to get move
         # flatten is to convert 3x3 to 9
         X = state
@@ -381,7 +476,7 @@ def greedy_action(state: torch.Tensor, raw_state: torch.Tensor, net: nn.Module):
 
 def encode_board(x, p):
     # print("x:", x.shape)
-    # x should be a 3x3 board
+    # x should be a 1x9 board
     # channel encode it!
     no = (x == 0).float()
     xs = (x == 1).float()
@@ -394,6 +489,33 @@ def encode_board(x, p):
     else:
         raise InvalidPlayerException()
     return board
+
+
+# def augment_board(x, flip_x=False, flip_y=False, rotations=0):
+#     # x should be a 1x9 board
+#     # rotations should be in range [0, 3]
+#     # i dont want to implement rotations :(
+#     # hopefully flips are good enough for now lol
+#     flips = []
+#     # i actually have no idea if these dimensions are correct :P
+#     if flip_x:
+#         flips.append(0)
+#     if flip_y:
+#         flips.append(1)
+#     return torch.flip(x.reshape([3, 3]), dims=flips).flatten()
+
+
+def save_checkpoint(episode_i):
+    save_path = f"ttt_{datetime.now().date()}_{episode_i}.tar"
+    torch.save(
+        {
+            "policy_net_state_dict": policy_net.state_dict(),
+            "target_net_state_dict": target_net.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "eps_steps": eps_steps,
+        },
+        save_path,
+    )
 
 
 if __name__ == "__main__":
@@ -411,7 +533,7 @@ if __name__ == "__main__":
         print(f"load {load_path}")
         checkpoint = torch.load(load_path, weights_only=True)
         policy_net.load_state_dict(checkpoint["policy_net_state_dict"])
-        target_net.load_state_dict(policy_net.state_dict())
+        target_net.load_state_dict(checkpoint["target_net_state_dict"])
         # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         eps_steps = checkpoint["eps_steps"]
         policy_net.train()
@@ -419,21 +541,24 @@ if __name__ == "__main__":
         pass
 
     try:
-        save_path = sys.argv[sys.argv.index("--save") + 1]
+        run_name = sys.argv[sys.argv.index("--save") + 1]
     except (ValueError, IndexError):
-        save_path = None
+        run_name = ""
 
     try:
         train(1000000)  # 1 million games
     except KeyboardInterrupt:
         print("\ncancel")
 
-    if save_path is None:
-        save_path = f"ttt_{int(datetime.now().timestamp())}.tar"
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+    run_name = "_" + run_name if run_name else ""
+    save_path = f"ttt_{timestamp}{run_name}.tar"
+
     print(f"save {save_path}")
     torch.save(
         {
             "policy_net_state_dict": policy_net.state_dict(),
+            "target_net_state_dict": target_net.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "eps_steps": eps_steps,
         },
