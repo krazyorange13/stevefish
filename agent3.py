@@ -7,7 +7,7 @@ import random
 from datetime import datetime
 
 from collections import namedtuple, deque, Counter
-from itertools import count
+from itertools import count, product
 
 import matplotlib.pyplot as plt
 
@@ -334,9 +334,9 @@ def step(env: Environment, memory: ReplayMemory, analysis: Analysis, random_opp=
         next_state_opp_unencoded = (
             torch.from_numpy(_next_state_opp).flatten().unsqueeze(0)
         )
-        done_opp = env.game.get_done()
-
         next_state_opp = encode_board(next_state_opp_unencoded, env.policy_net_p)
+
+        done_opp = env.game.get_done()
         next_state = next_state_opp
 
         # win if opp lost or lose if opp won
@@ -346,7 +346,28 @@ def step(env: Environment, memory: ReplayMemory, analysis: Analysis, random_opp=
             reward = reward_opp
 
     if not random_opp:
-        memory.push(state, torch.tensor([[action]]), torch.tensor([reward]), next_state)
+        for flip_x in [False, True]:
+            for flip_y in [False, True]:
+                aug_state_unencoded = augment_board(
+                    state_unencoded, flip_x=flip_x, flip_y=flip_y
+                )
+                aug_state = encode_board(
+                    aug_state_unencoded,
+                    p=env.policy_net_p,
+                )
+                aug_next_state_unencoded = augment_board(
+                    next_state_unencoded, flip_x=flip_x, flip_y=flip_y
+                )
+                aug_next_state = encode_board(
+                    aug_next_state_unencoded,
+                    p=env.policy_net_p,
+                )
+                memory.push(
+                    aug_state,
+                    torch.tensor([[action]]),
+                    torch.tensor([reward]),
+                    aug_next_state,
+                )
 
     if done or done_opp:
         if not random_opp:
@@ -491,18 +512,18 @@ def encode_board(x, p):
     return board
 
 
-# def augment_board(x, flip_x=False, flip_y=False, rotations=0):
-#     # x should be a 1x9 board
-#     # rotations should be in range [0, 3]
-#     # i dont want to implement rotations :(
-#     # hopefully flips are good enough for now lol
-#     flips = []
-#     # i actually have no idea if these dimensions are correct :P
-#     if flip_x:
-#         flips.append(0)
-#     if flip_y:
-#         flips.append(1)
-#     return torch.flip(x.reshape([3, 3]), dims=flips).flatten()
+def augment_board(x, flip_x=False, flip_y=False, rotations=0):
+    # x should be a 1x9 board
+    # rotations should be in range [0, 3]
+    # i dont want to implement rotations :(
+    # hopefully flips are good enough for now lol
+    flips = []
+    # i actually have no idea if these dimensions are correct :P
+    if flip_x:
+        flips.append(0)
+    if flip_y:
+        flips.append(1)
+    return torch.flip(x.reshape([3, 3]), dims=flips).flatten().unsqueeze(0)
 
 
 def save_checkpoint(episode_i):
