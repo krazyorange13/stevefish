@@ -346,7 +346,7 @@ def step(env: Environment, memory: ReplayMemory, analysis: Analysis, random_opp=
             reward = reward_opp
 
     if not random_opp:
-        memory.push(state, torch.tensor([[action]]), torch.tensor([reward]))
+        memory.push(state, torch.tensor([[action]]), torch.tensor([reward]), next_state)
 
     if done or done_opp:
         if not random_opp:
