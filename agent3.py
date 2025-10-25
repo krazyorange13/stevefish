@@ -50,6 +50,8 @@ class Analysis:
         self.games = []
         self.games_random = []
         self.losses = []
+        self.game_steps = []
+        self.q_values = []
 
     def push_reward(self, reward):
         self.games.append(reward)
@@ -60,50 +62,39 @@ class Analysis:
     def push_loss(self, loss):
         self.losses.append(loss)
 
+    def push_q_values(self, step, q_values):
+        self.game_steps.append(step)
+        # q_values should be a tuple with 9 items
+        self.q_values.extend(q_values)
+
     def monitor(self):
         self.steps += 1
         if self.steps % self.dump_rate == 0:
             self.dump()
 
     def dump(self):
-        # version_num = (ctypes.c_int)(1)
+        arrs = [
+            self.games,
+            self.games_random,
+            self.losses,
+            self.game_steps,
+            self.q_values,
+        ]
 
-        # games_buf = (ctypes.c_double * len(self.games))()
-        # games_buf[:] = self.games
-        # games_len = (ctypes.c_long)(len(self.games))
+        buf_version_num = struct.pack("<I", 3)
+        buf_arrs_len = struct.pack("<I", len(arrs))
+        buf_arr_lens = struct.pack(f"<{len(arrs)}I", *[len(arr) for arr in arrs])
 
-        # games_random_len = (ctypes.c_long)(len(self.games_random))
-        # games_random_buf = (ctypes.c_double * len(self.games_random))()
-        # games_random_buf[:] = self.games_random
+        filename = f"ttt_{datetime.now().date()}_{self.steps}.dat"
 
-        # losses_len = (ctypes.c_long)(len(self.losses))
-        # losses_buf = (ctypes.c_double * len(self.losses))()
-        # losses_buf[:] = self.losses
-
-        version_num = struct.pack("<I", 2)
-        games_len = struct.pack("<I", len(self.games))
-        games_random_len = struct.pack("<I", len(self.games_random))
-        losses_len = struct.pack("<I", len(self.losses))
-
-        # can be optimized using ctypes but i want to keep things simple for now until i get it working
-        games_buf = struct.pack("<" + "f" * len(self.games), *self.games)
-        games_random_buf = struct.pack(
-            "<" + "f" * len(self.games_random), *self.games_random
-        )
-        losses_buf = struct.pack("<" + "f" * len(self.losses), *self.losses)
-
-        file_name = f"ttt_{datetime.now().date()}_{self.steps}.dat"
-        with open(file_name, "wb") as file:
-            # write version number
-            file.write(version_num)
-            # write length information for easy seeking
-            file.write(games_len)
-            file.write(games_random_len)
-            file.write(losses_len)
-            # write actual data
-            file.write(games_buf)
-            file.write(games_random_buf)
-            file.write(losses_buf)
+        with open(filename, "wb") as file:
+            file.write(buf_version_num)
+            file.write(buf_arrs_len)
+            file.write(buf_arr_lens)
+            for arr in arrs:
+                fmt = f"<{len(arr)}d"
+                buf_arr = struct.pack(fmt, *arr)
+                file.write(buf_arr)
 
 
 class IllegalMoveException(Exception):
@@ -210,7 +201,7 @@ def train(n_episodes):
 
         for step_i in count():
             # replay memory gathers training sample by interacting with the environment
-            done = step(env, memory, analysis)
+            done = step(env, memory, analysis, step_i)
 
             # compute loss and optimize networks on random training data
             optimize(optimizer, memory, analysis)
@@ -227,7 +218,7 @@ def train(n_episodes):
             env = Environment(nets=[policy_net, target_net])
             first_step(env)
             for step_i in count():
-                done = step(env, memory, analysis, random_opp=True)
+                done = step(env, memory, analysis, step_i, random_opp=True)
                 if done:
                     break
 
@@ -249,26 +240,31 @@ def first_step(env: Environment):
     state = torch.from_numpy(env.game.board.copy()).flatten().unsqueeze(0)
     raw_state = torch.from_numpy(env.game.board)
     state = encode_board(state, env.target_net_p)
-    action = greedy_action(state, raw_state, target_net)
+    action, _ = greedy_action(state, raw_state, target_net)
     _, _ = env.step(action, env.target_net_p)
 
 
-def step(env: Environment, memory: ReplayMemory, analysis: Analysis, random_opp=False):
+def step(
+    env: Environment, memory: ReplayMemory, analysis: Analysis, step_i, random_opp=False
+):
     state_unencoded = torch.from_numpy(env.game.board.copy()).flatten().unsqueeze(0)
     state = encode_board(state_unencoded, env.policy_net_p)
     raw_state = torch.from_numpy(env.game.board)
-    action = greedy_action(state, raw_state, policy_net, just_model=random_opp)
+    action, q_vals = greedy_action(state, raw_state, policy_net, just_model=random_opp)
     reward, _next_state = env.step(action, env.policy_net_p)
     next_state_unencoded = torch.from_numpy(_next_state).flatten().unsqueeze(0)
     raw_next_state = torch.from_numpy(env.game.board)
     done = env.game.get_done()
     done_opp = False
 
+    if q_vals is not None:
+        analysis.push_q_values(step_i, q_vals.tolist())
+
     if done:
         next_state = None
     else:
         next_state = encode_board(next_state_unencoded, env.target_net_p)
-        action_opp = greedy_action(
+        action_opp, _ = greedy_action(
             next_state, raw_next_state, target_net, just_random=random_opp
         )
         reward_opp, _next_state_opp = env.step(action_opp, env.target_net_p)
@@ -422,22 +418,27 @@ def greedy_action(
         # flatten is to convert 3x3 to 9
         X = state
         y = net(X.float()).squeeze()
+        _y = y.clone().detach()
+
         # legal mask for posterity
         illegal_mask = (raw_state != 0).flatten()
 
-        if torch.all(illegal_mask):
-            raise NoLegalMovesException()
+        # if torch.all(illegal_mask):
+        #     raise NoLegalMovesException()
 
         y[illegal_mask] = float("-inf")
-        move = torch.argmax(y).item()
+        action = torch.argmax(y).item()
 
-        return move
+        return action, _y
 
     else:
         # pick a random move
         actions = torch.nonzero((raw_state == 0).flatten())
         action = random.choice(actions).item()
-        return action
+        return action, None
+        # TODO: should we push 0,0, or None?
+        # we probably don't want to count those in our analysis
+        # we can use step_i as well to track the holes
 
 
 def encode_board(x, p):
@@ -520,13 +521,13 @@ if __name__ == "__main__":
     run_name = "_" + run_name if run_name else ""
     save_path = f"ttt_{timestamp}{run_name}.tar"
 
-    print(f"save {save_path}")
-    torch.save(
-        {
-            "policy_net_state_dict": policy_net.state_dict(),
-            "target_net_state_dict": target_net.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "eps_steps": eps_steps,
-        },
-        save_path,
-    )
+    # print(f"save {save_path}")
+    # torch.save(
+    #     {
+    #         "policy_net_state_dict": policy_net.state_dict(),
+    #         "target_net_state_dict": target_net.state_dict(),
+    #         "optimizer_state_dict": optimizer.state_dict(),
+    #         "eps_steps": eps_steps,
+    #     },
+    #     save_path,
+    # )
