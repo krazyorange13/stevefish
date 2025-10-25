@@ -175,6 +175,8 @@ class DQN(nn.Module):
             nn.LeakyReLU(),
             nn.Linear(64, 64),
             nn.LeakyReLU(),
+            nn.Linear(64, 64),
+            nn.LeakyReLU(),
             nn.Linear(64, DQN.N_ACTIONS),
         )
 
@@ -182,11 +184,11 @@ class DQN(nn.Module):
         return self.layers(x)
 
 
-BATCH_SIZE = 512
+BATCH_SIZE = 32
 GAMMA = 0.99
 EPS_START = 0.99
 EPS_END = 0.01
-EPS_DECAY = 2500
+EPS_DECAY = 20000
 TAU = 0.005
 LR = 3e-4
 
@@ -485,7 +487,7 @@ if __name__ == "__main__":
     target_net.load_state_dict(policy_net.state_dict())
 
     optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
-    memory = ReplayMemory(100000)
+    memory = ReplayMemory(500000)
     analysis = Analysis()  # watch rewards as training progresses
 
     try:
