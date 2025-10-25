@@ -188,7 +188,7 @@ BATCH_SIZE = 32
 GAMMA = 0.99
 EPS_START = 0.99
 EPS_END = 0.01
-EPS_DECAY = 20000
+EPS_DECAY = 2500
 TAU = 0.005
 LR = 3e-4
 
@@ -257,7 +257,7 @@ def step(env: Environment, memory: ReplayMemory, analysis: Analysis, random_opp=
     state_unencoded = torch.from_numpy(env.game.board.copy()).flatten().unsqueeze(0)
     state = encode_board(state_unencoded, env.policy_net_p)
     raw_state = torch.from_numpy(env.game.board)
-    action = greedy_action(state, raw_state, policy_net)
+    action = greedy_action(state, raw_state, policy_net, just_model=random_opp)
     reward, _next_state = env.step(action, env.policy_net_p)
     next_state_unencoded = torch.from_numpy(_next_state).flatten().unsqueeze(0)
     raw_next_state = torch.from_numpy(env.game.board)
@@ -403,7 +403,11 @@ def polyak():
 
 
 def greedy_action(
-    state: torch.Tensor, raw_state: torch.Tensor, net: nn.Module, just_random=False
+    state: torch.Tensor,
+    raw_state: torch.Tensor,
+    net: nn.Module,
+    just_random=False,
+    just_model=False,
 ):
     global eps_steps
     sample = random.random()
@@ -413,7 +417,7 @@ def greedy_action(
     eps_steps += 1
 
     # if True:
-    if sample > eps_threshold and not just_random:
+    if (sample > eps_threshold and not just_random) or just_model:
         # use net to get move
         # flatten is to convert 3x3 to 9
         X = state
@@ -508,7 +512,7 @@ if __name__ == "__main__":
         run_name = ""
 
     try:
-        train(1000000)  # 1 million games
+        train(10000000)  # 10 million games
     except KeyboardInterrupt:
         print("\ncancel")
 

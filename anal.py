@@ -58,12 +58,12 @@ def main():
 
     print("crunching hella numbers... ", end="", flush=True)
 
-    games_raw = smooth_percs(games_arr, results, 1000)
-    games_random_raw = smooth_percs(games_random_arr, results, 10)
+    games_raw = smooth_percs(games_arr, results, 500)
+    games_random_raw = smooth_percs(games_random_arr, results, 50)
     losses_raw = smooth(losses_arr, 1)
 
-    games_avg = smooth_percs(games_arr, results, 10000)
-    games_random_avg = smooth_percs(games_random_arr, results, 100)
+    games_avg = smooth_percs(games_arr, results, 5000)
+    games_random_avg = smooth_percs(games_random_arr, results, 500)
     losses_avg = smooth(losses_arr, 100)
 
     print("crunched!")
