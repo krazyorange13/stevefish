@@ -5,3 +5,4 @@ chess_ai_env/
 # models
 *.pth
 *.tar
+*.dat

@@ -7,9 +7,10 @@ import random
 from datetime import datetime
 
 from collections import namedtuple, deque, Counter
-from itertools import count, product
+from itertools import count
 
-import matplotlib.pyplot as plt
+import struct
+import ctypes
 
 import numpy as np
 
@@ -41,208 +42,68 @@ class ReplayMemory:
         return len(self.memory)
 
 
-class ResultTracker:
-    # TODO: don't hardcode this
-    WIN = 1
-    DRAW = 0.9
-    LOSS = -1
-
-    def __init__(self, run_len, ax, alpha=1.0):
-        self.results_run = deque([], maxlen=run_len)
-        self.steps = 0
-        self.percs_win = []
-        self.percs_draw = []
-        self.percs_lose = []
-
-        # https://xkcd.com/color/rgb/
-        self.line_lose = ax.plot([], [], color="#ee4488", lw=1)[0]
-        self.line_draw = ax.plot([], [], color="#444488", lw=1)[0]
-        self.line_win = ax.plot([], [], color="#44ee88", lw=1)[0]
-        self.line_lose.set_alpha(alpha)
-        self.line_draw.set_alpha(alpha)
-        self.line_win.set_alpha(alpha)
-
-    def push(self, result):
-        self.steps += 1
-        self.results_run.append(result)
-        counter = Counter(self.results_run)
-        total = len(self.results_run)
-        perc_win = counter[ResultTracker.WIN] / total
-        perc_draw = counter[ResultTracker.DRAW] / total
-        perc_lose = counter[ResultTracker.LOSS] / total
-        self.percs_win.append(perc_win)
-        self.percs_draw.append(perc_draw)
-        self.percs_lose.append(perc_lose)
-
-    def monitor(self):
-        self.line_win.set_xdata(np.arange(self.steps))
-        self.line_win.set_ydata(self.percs_win)
-        self.line_draw.set_xdata(np.arange(self.steps))
-        self.line_draw.set_ydata(self.percs_draw)
-        self.line_lose.set_xdata(np.arange(self.steps))
-        self.line_lose.set_ydata(self.percs_lose)
-
-    def get_lines(self):
-        return [self.line_win, self.line_draw, self.line_lose]
-
-
-class AverageTracker:
-    def __init__(self, run_len, ax, alpha=1.0):
-        self.results_run = deque([], maxlen=run_len)
-        self.steps = 0
-        self.results = []
-        self.line_results = ax.plot([], [], color="#008888", lw=1)[0]
-        self.line_results.set_alpha(alpha)
-
-    def push(self, result):
-        self.steps += 1
-        self.results_run.append(result)
-        result_avg = sum(self.results_run) / len(self.results_run)
-        self.results.append(result_avg)
-
-    def monitor(self):
-        self.line_results.set_xdata(np.arange(self.steps))
-        self.line_results.set_ydata(self.results)
-
-    def get_lines(self):
-        return [self.line_results]
-
-
-class MinMaxTracker:
-    def __init__(self, start_min, start_max):
-        self.min = start_min
-        self.max = start_max
-
-    def push(self, value):
-        self.min = min(self.min, value)
-        self.max = max(self.max, value)
-
-
 class Analysis:
     def __init__(self):
-        # matplotlib stuff
-        self.fig, self.axs = plt.subplots(1, 3)
-        self.games_ax = self.axs[0]
-        self.games_random_ax = self.axs[1]
-        self.losses_ax = self.axs[2]
-        self.games_ax.set_ylim(0, 1)
-        self.games_random_ax.set_ylim(0, 1)
-
-        plt.show(block=False)
-        self.fig.show()
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
-
-        self.last_fig_size = self.fig.get_size_inches().copy()
-        self.fig_size = self.fig.get_size_inches().copy()
-
         self.steps = 0
+        self.dump_rate = 10000
 
-        # keep track of everything
-        # adjusting maxlen here will change smoothness of the graph
-        self.games_noisy = ResultTracker(50, self.games_ax, alpha=0.1)
-        self.games_smooth = ResultTracker(1000, self.games_ax)
-        self.games_random_noisy = ResultTracker(10, self.games_random_ax, alpha=0.1)
-        self.games_random_smooth = ResultTracker(100, self.games_random_ax)
-        self.losses_noisy = AverageTracker(1, self.losses_ax, alpha=0.2)
-        self.losses_smooth = AverageTracker(100, self.losses_ax)
-        self.losses_minmax = MinMaxTracker(0, 0)
+        self.games = []
+        self.games_random = []
+        self.losses = []
 
     def push_reward(self, reward):
-        self.games_noisy.push(reward)
-        self.games_smooth.push(reward)
+        self.games.append(reward)
 
     def push_random_opp(self, reward):
-        self.games_random_noisy.push(reward)
-        self.games_random_smooth.push(reward)
+        self.games_random.append(reward)
 
     def push_loss(self, loss):
-        self.losses_noisy.push(loss)
-        self.losses_smooth.push(loss)
-        self.losses_minmax.push(loss)
+        self.losses.append(loss)
 
     def monitor(self):
-        # self.fig_size = self.fig.get_size_inches()
-        # if (
-        #     not np.allclose(self.fig_size, self.last_fig_size)
-        # ):
-        if self.steps % 100 == 0 and True:
-            self.games_ax.clear()
-            self.games_random_ax.clear()
-            self.losses_ax.clear()
-
-            # set limits
-
-            if self.games_noisy.steps > 0:
-                self.games_ax.set_xlim(0, self.games_noisy.steps)
-
-            if self.games_random_noisy.steps > 0:
-                self.games_random_ax.set_xlim(0, self.games_random_noisy.steps)
-
-            if self.losses_noisy.steps > 0:
-                self.losses_ax.set_ylim(self.losses_minmax.min, self.losses_minmax.max)
-                self.losses_ax.set_xlim(0, self.losses_noisy.steps)
-
-            self.fig.canvas.draw()
-
-            self.games_ax_bg = self.fig.canvas.copy_from_bbox(self.games_ax.bbox)  # type: ignore
-            self.games_random_ax_bg = self.fig.canvas.copy_from_bbox(  # type: ignore
-                self.games_random_ax.bbox
-            )
-            self.losses_ax_bg = self.fig.canvas.copy_from_bbox(self.losses_ax.bbox)  # type: ignore
-
-            # self.last_fig_size = self.fig_size.copy()
-
         self.steps += 1
+        if self.steps % self.dump_rate == 0:
+            self.dump()
 
-        self.games_noisy.monitor()
-        self.games_smooth.monitor()
-        self.games_random_noisy.monitor()
-        self.games_random_smooth.monitor()
-        self.losses_noisy.monitor()
-        self.losses_smooth.monitor()
+    def dump(self):
+        # version_num = (ctypes.c_int)(1)
 
-        if self.games_noisy.steps > 0:
-            self.games_ax.set_xlim(0, self.games_noisy.steps)
+        # games_buf = (ctypes.c_double * len(self.games))()
+        # games_buf[:] = self.games
+        # games_len = (ctypes.c_long)(len(self.games))
 
-        if self.games_random_noisy.steps > 0:
-            self.games_random_ax.set_xlim(0, self.games_random_noisy.steps)
+        # games_random_len = (ctypes.c_long)(len(self.games_random))
+        # games_random_buf = (ctypes.c_double * len(self.games_random))()
+        # games_random_buf[:] = self.games_random
 
-        if self.losses_noisy.steps > 0:
-            self.losses_ax.set_ylim(self.losses_minmax.min, self.losses_minmax.max)
-            self.losses_ax.set_xlim(0, self.losses_noisy.steps)
+        # losses_len = (ctypes.c_long)(len(self.losses))
+        # losses_buf = (ctypes.c_double * len(self.losses))()
+        # losses_buf[:] = self.losses
 
-        self.fig.canvas.restore_region(self.games_ax_bg)  # type: ignore
-        for line in self.games_noisy.get_lines() + self.games_smooth.get_lines():
-            self.games_ax.draw_artist(line)
-        self.fig.canvas.blit(self.games_ax.bbox)
+        version_num = struct.pack("<I", 2)
+        games_len = struct.pack("<I", len(self.games))
+        games_random_len = struct.pack("<I", len(self.games_random))
+        losses_len = struct.pack("<I", len(self.losses))
 
-        self.fig.canvas.restore_region(self.games_random_ax_bg)  # type: ignore
-        for line in (
-            self.games_random_noisy.get_lines() + self.games_random_smooth.get_lines()
-        ):
-            self.games_random_ax.draw_artist(line)
-        self.fig.canvas.blit(self.games_random_ax.bbox)
+        # can be optimized using ctypes but i want to keep things simple for now until i get it working
+        games_buf = struct.pack("<" + "f" * len(self.games), *self.games)
+        games_random_buf = struct.pack(
+            "<" + "f" * len(self.games_random), *self.games_random
+        )
+        losses_buf = struct.pack("<" + "f" * len(self.losses), *self.losses)
 
-        self.fig.canvas.restore_region(self.losses_ax_bg)  # type: ignore
-        for line in self.losses_noisy.get_lines() + self.losses_smooth.get_lines():
-            self.games_ax.draw_artist(line)
-        self.fig.canvas.blit(self.losses_ax.bbox)
-
-        self.fig.canvas.flush_events()
-
-        if self.steps % 100 == 1 and False:
-            self.games_ax.clear()
-            self.games_random_ax.clear()
-            self.losses_ax.clear()
-            self.games_ax_bg = self.fig.canvas.copy_from_bbox(self.games_ax.bbox)
-            self.games_random_ax_bg = self.fig.canvas.copy_from_bbox(
-                self.games_random_ax.bbox
-            )
-            self.losses_ax_bg = self.fig.canvas.copy_from_bbox(self.losses_ax.bbox)
-            self.fig.canvas.draw()
-            # plt.draw()
-        # plt.pause(0.05)
+        file_name = f"ttt_{datetime.now().date()}_{self.steps}.dat"
+        with open(file_name, "wb") as file:
+            # write version number
+            file.write(version_num)
+            # write length information for easy seeking
+            file.write(games_len)
+            file.write(games_random_len)
+            file.write(losses_len)
+            # write actual data
+            file.write(games_buf)
+            file.write(games_random_buf)
+            file.write(losses_buf)
 
 
 class IllegalMoveException(Exception):
@@ -369,7 +230,7 @@ def train(n_episodes):
                     break
 
         # save model checkpoint
-        if episode_i % 10000 == 0:
+        if episode_i % 10000 == 0 and episode_i != 0:
             save_checkpoint(episode_i)
 
         # monitor training progress
@@ -663,6 +524,3 @@ if __name__ == "__main__":
         },
         save_path,
     )
-
-    plt.savefig("Figure_1.png", bbox_inches="tight")
-    plt.show()
