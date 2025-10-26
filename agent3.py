@@ -45,7 +45,7 @@ class ReplayMemory:
 class Analysis:
     def __init__(self):
         self.steps = 0
-        self.dump_rate = 10000
+        self.dump_rate = 50000
 
         self.games = []
         self.games_random = []
@@ -223,7 +223,7 @@ def train(n_episodes):
                     break
 
         # save model checkpoint
-        if episode_i % 10000 == 0 and episode_i != 0:
+        if episode_i % 50000 == 0 and episode_i != 0:
             save_checkpoint(episode_i)
 
         # monitor training progress
