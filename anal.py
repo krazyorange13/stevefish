@@ -67,7 +67,7 @@ def version_3(data):
 
     print("reading hella numbers... ", end="", flush=True)
 
-    arr_lens = arr_lens[:3]
+    # arr_lens = arr_lens[:4]
 
     arrs = []
     for arr_i, arr_len in enumerate(arr_lens):
@@ -93,14 +93,14 @@ def version_3(data):
 
     print("crunching hella numbers... ", end="", flush=True)
 
-    np_games_raw = smooth_percs(arrs[0], rewards_3, 100)
-    np_games_avg = smooth_percs(arrs[0], rewards_3, 1000)
+    np_games_raw = smooth_percs(arrs[0], rewards_3, 200)
+    np_games_avg = smooth_percs(arrs[0], rewards_3, 2000)
     np_games_random_raw = smooth_percs(arrs[1], rewards_3, 50)
     np_games_random_avg = smooth_percs(arrs[1], rewards_3, 500)
     np_losses_raw = smooth(arrs[2], 1)
     np_losses_avg = smooth(arrs[2], 100)
-    # np_q_values_raw = smooth_rows(arrs[4].reshape([-1, 9]).T, 20)
-    # np_q_values_avg = smooth_rows(arrs[4].reshape([-1, 9]).T, 1000)
+    np_q_values_raw = smooth_rows(arrs[4].reshape([-1, 9]).T, 20)
+    np_q_values_avg = smooth_rows(arrs[4].reshape([-1, 9]).T, 1000)
 
     print("done")
 
@@ -129,7 +129,7 @@ def version_3(data):
 
     print("plotting hella numbers... ", end="", flush=True)
 
-    fig, axs = plt.subplots(1, len(arrs))
+    fig, axs = plt.subplots(1, len(arrs) - 1)
     fig.tight_layout()
     axs[0].set_ylim(0, 1)
     axs[0].set_xlim(0, np_games_raw.shape[0])
@@ -137,13 +137,13 @@ def version_3(data):
     axs[1].set_xlim(0, np_games_random_raw.shape[0])
     axs[2].set_ylim(np_losses_raw.min(), np_losses_raw.max())
     axs[2].set_xlim(0, np_losses_raw.shape[0])
-    # axs[3].set_ylim(np_q_values_raw.min(), np_q_values_raw.max())
-    # axs[3].set_xlim(0, np_q_values_raw.shape[1])
+    axs[3].set_ylim(np_q_values_raw.min(), np_q_values_raw.max())
+    axs[3].set_xlim(0, np_q_values_raw.shape[1])
 
     plot_smooth_percs(axs[0], np_games_raw, np_games_avg, colors_3)
     plot_smooth_percs(axs[1], np_games_random_raw, np_games_random_avg, colors_3)
     plot_smooth(axs[2], np_losses_raw, np_losses_avg, color_1)
-    # plot_smooth_qs(axs[3], np_q_values_raw, np_q_values_avg, colors_9)
+    plot_smooth_qs(axs[3], np_q_values_raw, np_q_values_avg, colors_9)
 
     print("done")
 

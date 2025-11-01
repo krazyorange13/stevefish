@@ -25,7 +25,9 @@ if torch.accelerator.is_available():
     if accelerator := torch.accelerator.current_accelerator():
         device = accelerator.type
 
-Transition = namedtuple("Transition", ("state", "action", "reward", "next_state"))
+Transition = namedtuple(
+    "Transition", ("state", "action", "reward", "next_state", "illegal_actions_mask")
+)
 
 
 class ReplayMemory:
@@ -262,6 +264,7 @@ def step(
 
     if done:
         next_state = None
+        next_state_opp_unencoded = None
     else:
         next_state = encode_board(next_state_unencoded, env.target_net_p)
         action_opp, _ = greedy_action(
@@ -283,28 +286,43 @@ def step(
             reward = reward_opp
 
     if not random_opp:
-        for flip_x in [False, True]:
-            for flip_y in [False, True]:
-                aug_state_unencoded = augment_board(
-                    state_unencoded, flip_x=flip_x, flip_y=flip_y
-                )
-                aug_state = encode_board(
-                    aug_state_unencoded,
-                    p=env.policy_net_p,
-                )
-                aug_next_state_unencoded = augment_board(
-                    next_state_unencoded, flip_x=flip_x, flip_y=flip_y
-                )
-                aug_next_state = encode_board(
-                    aug_next_state_unencoded,
-                    p=env.policy_net_p,
-                )
-                memory.push(
-                    aug_state,
-                    torch.tensor([[action]]),
-                    torch.tensor([reward]),
-                    aug_next_state,
-                )
+        # for flip_x in [False, True]:
+        #     for flip_y in [False, True]:
+        #         aug_state_unencoded = augment_board(
+        #             state_unencoded, flip_x=flip_x, flip_y=flip_y
+        #         )
+        #         aug_state = encode_board(
+        #             aug_state_unencoded,
+        #             p=env.policy_net_p,
+        #         )
+        #         aug_next_state_unencoded = augment_board(
+        #             next_state_unencoded, flip_x=flip_x, flip_y=flip_y
+        #         )
+        #         aug_next_state = encode_board(
+        #             aug_next_state_unencoded,
+        #             p=env.policy_net_p,
+        #         )
+        #         # TODO: action has to get augmented as well!!!
+        #         memory.push(
+        #             aug_state,
+        #             torch.tensor([[action]]),
+        #             torch.tensor([reward]),
+        #             aug_next_state,
+        #             legal_actions_mask,
+        #         )
+
+        if done:
+            illegal_actions_mask = None
+        else:
+            illegal_actions_mask = next_state_opp_unencoded != 0
+
+        memory.push(
+            state,
+            torch.tensor([[action]]),
+            torch.tensor([reward]),
+            next_state,
+            illegal_actions_mask,
+        )
 
     if done or done_opp:
         if not random_opp:
@@ -331,6 +349,9 @@ def optimize(optimizer, memory, analysis):
     # some next_states are finished! we don't want to run the target_net on them.
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)))
     non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+    non_final_illegal_masks = torch.cat(
+        [s for s in batch.illegal_actions_mask if s is not None]
+    )
 
     # print(state_batch.shape)
     # print(action_batch.shape)
@@ -361,12 +382,12 @@ def optimize(optimizer, memory, analysis):
     # illegal_masks = non_final_next_states != 0
     next_state_q_values = torch.zeros(BATCH_SIZE)
     with torch.no_grad():
-        # TODO: do we need to do legal masking here??
-        target_net_predictions = target_net(non_final_next_states).max(1).values
-        # print(next_state_q_values.shape)
-        # print(non_final_mask.shape)
-        # print(target_net_predictions.shape)
+        # i *think* the legal masking is working :P
+        target_net_predictions = target_net(non_final_next_states)
+        target_net_predictions[non_final_illegal_masks] = float("-inf")
+        target_net_predictions = target_net_predictions.max(1).values
         next_state_q_values[non_final_mask] = target_net_predictions
+
     # next_state_q_values is now a long list of the best Q value for every next_state
 
     # GAMMA helps fight DQN overestimation?
@@ -416,9 +437,10 @@ def greedy_action(
     if (sample > eps_threshold and not just_random) or just_model:
         # use net to get move
         # flatten is to convert 3x3 to 9
-        X = state
-        y = net(X.float()).squeeze()
-        _y = y.clone().detach()
+        with torch.no_grad():
+            X = state
+            y = net(X.float()).squeeze()
+            _y = y.clone().detach()
 
         # legal mask for posterity
         illegal_mask = (raw_state != 0).flatten()
