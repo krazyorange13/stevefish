@@ -67,7 +67,7 @@ def version_3(data):
 
     print("reading hella numbers... ", end="", flush=True)
 
-    # arr_lens = arr_lens[:4]
+    # arr_lens = arr_lens[:2]
 
     arrs = []
     for arr_i, arr_len in enumerate(arr_lens):
@@ -85,7 +85,7 @@ def version_3(data):
         "#64BB70",
         "#56B66B",
         "#47B066",
-        "#ff2288",  # "#39AB62",
+        "#ffAB62",  # "#39AB62",
     ]
     colors_3 = ["#ee4488", "#444488", "#44ee88"]
     color_1 = "#008888"
@@ -129,8 +129,10 @@ def version_3(data):
 
     print("plotting hella numbers... ", end="", flush=True)
 
-    fig, axs = plt.subplots(1, len(arrs) - 1)
-    fig.tight_layout()
+    fig, axs = plt.subplots(1, len(arrs) - 1, layout="constrained")
+    # fig, axs = plt.subplots(1, 2, layout="constrained")
+    axs[0].set_yscale("linear")
+    axs[1].set_yscale("linear")
     axs[0].set_ylim(0, 1)
     axs[0].set_xlim(0, np_games_raw.shape[0])
     axs[1].set_ylim(0, 1)
@@ -139,6 +141,8 @@ def version_3(data):
     axs[2].set_xlim(0, np_losses_raw.shape[0])
     axs[3].set_ylim(np_q_values_raw.min(), np_q_values_raw.max())
     axs[3].set_xlim(0, np_q_values_raw.shape[1])
+    # axs[0].set_ylim(0, 1)
+    # axs[1].set_ylim(0, 1)
 
     plot_smooth_percs(axs[0], np_games_raw, np_games_avg, colors_3)
     plot_smooth_percs(axs[1], np_games_random_raw, np_games_random_avg, colors_3)

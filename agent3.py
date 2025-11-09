@@ -98,6 +98,9 @@ class Analysis:
                 buf_arr = struct.pack(fmt, *arr)
                 file.write(buf_arr)
 
+        for arr in arrs:
+            arr.clear()
+
 
 class IllegalMoveException(Exception):
     """Exception raised when an illegal move is attempted."""
@@ -260,7 +263,7 @@ def step(
     done_opp = False
 
     if q_vals is not None:
-        analysis.push_q_values(step_i, q_vals.tolist())
+        analysis.push_q_values(step_i, q_vals.tolist().copy())
 
     if done:
         next_state = None
@@ -311,10 +314,13 @@ def step(
         #             legal_actions_mask,
         #         )
 
-        if done:
+        if done:  # or done_opp:
             illegal_actions_mask = None
         else:
             illegal_actions_mask = next_state_opp_unencoded != 0
+            if illegal_actions_mask.sum() == 9:
+                # print("BAD BAD BAD!")
+                illegal_actions_mask = torch.zeros([1, 9], dtype=torch.bool)
 
         memory.push(
             state,
@@ -386,7 +392,13 @@ def optimize(optimizer, memory, analysis):
         target_net_predictions = target_net(non_final_next_states)
         target_net_predictions[non_final_illegal_masks] = float("-inf")
         target_net_predictions = target_net_predictions.max(1).values
+        # print(target_net_predictions)
+        # print("I AM STEVE I AM STEVE I AM STEVE I AM STEVE I AM STEVE")
         next_state_q_values[non_final_mask] = target_net_predictions
+        # print(next_state_q_values)
+        # print("I AM GROOT I AM GROOT I AM GROOT I AM GROOT I AM GROOT")
+        # if next_state_q_values.isinf().any():
+        #     print("BAD BAD BAD")
 
     # next_state_q_values is now a long list of the best Q value for every next_state
 
