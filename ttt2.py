@@ -16,7 +16,7 @@ class TTT2:
     )
 
     def __init__(self):
-        self.b = torch.zeros([2, 9])
+        self.b = torch.zeros([1, 9])
 
         # self.board is a flat 1x9 tensor
         # player 1 (X) is represented by 1
@@ -27,7 +27,7 @@ class TTT2:
         # TODO multiple boards at once (batch dim)
 
     def mov(self, m, p):
-        self.b.scatter_(1, m.unsqueeze(1), p.unsqueeze(1))
+        self.b.scatter_(1, m, p)
 
     def win(self, p):
         lins = self.b[:, self.WINS]
@@ -35,11 +35,11 @@ class TTT2:
         isp = lins == _p
         three = isp.all(dim=2)
         win = three.any(dim=1)
-        print(f"lins {lins.shape}: {lins}")
-        print(f"_p {_p.shape}: {_p}")
-        print(f"isp {isp.shape}: {isp}")
-        print(f"three {three.shape}: {three}")
-        print(f"win {win.shape}: {win}")
+        # print(f"lins {lins.shape}: {lins}")
+        # print(f"_p {_p.shape}: {_p}")
+        # print(f"isp {isp.shape}: {isp}")
+        # print(f"three {three.shape}: {three}")
+        # print(f"win {win.shape}: {win}")
         return win
 
     def wina(self):
@@ -49,12 +49,15 @@ class TTT2:
         isp = lins.unsqueeze(1) == _p
         three = isp.all(dim=3)
         win = three.any(dim=2)
-        print(f"lins {lins.shape}: {lins}")
-        print(f"_p {_p.shape}: {_p}")
-        print(f"isp {isp.shape}: {isp}")
-        print(f"three {three.shape}: {three}")
-        print(f"win {win.shape}: {win}")
+        # print(f"lins {lins.shape}: {lins}")
+        # print(f"_p {_p.shape}: {_p}")
+        # print(f"isp {isp.shape}: {isp}")
+        # print(f"three {three.shape}: {three}")
+        # print(f"win {win.shape}: {win}")
         return win
+
+    def drw(self):
+        return (self.b == 0).sum(dim=1) == 0
 
     def asp(self, p):
         return self.b * p
