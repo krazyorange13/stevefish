@@ -3,9 +3,12 @@ import random
 from dataclasses import dataclass
 from collections import deque
 from itertools import count
+import struct
 
 import torch
 import torch.nn as nn
+
+from multiprocessing.connection import Client
 
 import ttt2
 
@@ -72,6 +75,34 @@ class ReplayMemory:
         return len(self.mem)
 
 
+class Analysis:
+    def __init__(self):
+        self.transitions = []
+        self.eps = []
+        self.loss = []
+
+    def push(self, transition, eps, loss):
+        self.transitions.append(transition)
+        self.eps.append(eps)
+        self.loss.append(loss)
+
+    def dump(self):
+        self.transitions = []
+        self.eps = []
+        self.loss = []
+        # try:
+        #     address = ("localhost", 6000)
+        #     conn = Client(address, authkey=b"agent4pypasswrod")
+        #     conn.send({"load": "transitions", "data": self.transitions})
+        #     conn.send({"load": "eps", "data": self.eps})
+        #     conn.send({"load": "loss", "data": self.loss})
+        #     self.transitions = []
+        #     self.eps = []
+        #     self.loss = []
+        # except ConnectionRefusedError:
+        #     pass
+
+
 class DQN(nn.Module):
     # ez pz no encoding
     IN = 9
@@ -80,13 +111,15 @@ class DQN(nn.Module):
     def __init__(self):
         super(DQN, self).__init__()
         self.seq = nn.Sequential(
-            nn.Linear(DQN.IN, 16),
+            nn.Linear(DQN.IN, 32),
             nn.Sigmoid(),
-            nn.Linear(16, 16),
+            nn.Linear(32, 32),
             nn.Sigmoid(),
-            nn.Linear(16, 16),
+            nn.Linear(32, 32),
             nn.Sigmoid(),
-            nn.Linear(16, DQN.OUT),
+            nn.Linear(32, 32),
+            nn.Sigmoid(),
+            nn.Linear(32, DQN.OUT),
         )
 
     def forward(self, x):
@@ -98,9 +131,9 @@ class System:
     LR = 3e-4
     GAMMA = 0.9
     TAU = 0.005
-    EPS_START = 0.99
-    EPS_END = 0.01
-    EPS_DECAY = 2500
+    EPS_START = 0.9
+    EPS_END = 0.1
+    EPS_DECAY = 500000
     REPLAYMEM_SIZE = 10_000
 
     def __init__(self):
@@ -111,7 +144,10 @@ class System:
             self.policy_net.parameters(), lr=self.LR, amsgrad=True
         )
         self.memory = ReplayMemory(self.REPLAYMEM_SIZE)
+        self.analysis = Analysis()
         self.eps_steps = 0
+        self.eps_threshold = self.EPS_START
+        self.loss = 0
 
     def train(self, n_episodes):
         print("start")
@@ -127,15 +163,24 @@ class System:
                     print(end=".", flush=True)
                     break
 
-        # for t in self.memory.mem:
-        #     print(t)
+            if episode_i % 50000 == 0 and episode_i != 0:
+                path = f"ttt2_{episode_i}.pth"
+                torch.save(self.policy_net.state_dict(), path)
+
+                for i in range(
+                    len(self.analysis.transitions) - 15, len(self.analysis.transitions)
+                ):
+                    print("  eps", self.analysis.eps[i])
+                    print("  lss", self.analysis.loss[i])
+                    print(self.analysis.transitions[i])
+                self.analysis.dump()
 
         print("done")
 
     def first_step(self, ttt):
         if random.randint(0, 1):
             _state = ttt.b.clone().detach()
-            _action = self.select_action(_state, self.target_net)
+            _action = self.select_action(_state, self.target_net, noeps=True)
             ttt.mov(_action, torch.tensor([-1], dtype=torch.float).unsqueeze(1))
 
     def step(self, ttt: ttt2.TTT2):
@@ -147,43 +192,48 @@ class System:
             next_state = None
             T = Transition(state, action, reward, next_state)
             self.memory.push(T)
+            self.analysis.push(T, self.eps_threshold, self.loss)
             return True
         elif ttt.drw():
             reward = torch.tensor([[0]])
             next_state = None
             T = Transition(state, action, reward, next_state)
             self.memory.push(T)
+            self.analysis.push(T, self.eps_threshold, self.loss)
             return True
         else:
             _state = ttt.asp(-1).clone().detach()
-            _action = self.select_action(_state, self.target_net)
+            _action = self.select_action(_state, self.target_net, noeps=True)
             ttt.mov(_action, torch.tensor([-1], dtype=torch.float).unsqueeze(1))
             if ttt.win(torch.tensor([-1])):
                 reward = torch.tensor([[-1]])
                 next_state = None
                 T = Transition(state, action, reward, next_state)
                 self.memory.push(T)
+                self.analysis.push(T, self.eps_threshold, self.loss)
                 return True
             elif ttt.drw():
                 reward = torch.tensor([[0]])
                 next_state = None
                 T = Transition(state, action, reward, next_state)
                 self.memory.push(T)
+                self.analysis.push(T, self.eps_threshold, self.loss)
                 return True
             else:
                 reward = torch.tensor([[0]])
                 next_state = ttt.b.clone().detach()
                 T = Transition(state, action, reward, next_state)
                 self.memory.push(T)
+                self.analysis.push(T, self.eps_threshold, self.loss)
 
-    def select_action(self, b: torch.Tensor, net: DQN):
+    def select_action(self, b: torch.Tensor, net: DQN, noeps=False):
         sample = random.random()
-        eps_threshold = self.EPS_END + (self.EPS_START - self.EPS_END) * math.exp(
+        self.eps_threshold = self.EPS_END + (self.EPS_START - self.EPS_END) * math.exp(
             -1.0 * self.eps_steps / self.EPS_DECAY
         )
         self.eps_steps += 1
 
-        if sample > eps_threshold:
+        if sample > self.eps_threshold or noeps:
             # use net
             with torch.no_grad():
                 X = b  # .clone().detach()
@@ -234,6 +284,7 @@ class System:
 
         criterion = nn.SmoothL1Loss()
         loss = criterion(state_q_values, expected_state_q_values)
+        self.loss = loss.item()
         self.optimizer.zero_grad()
         loss.backward()
         nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
@@ -263,4 +314,4 @@ if __name__ == "__main__":
         if torch.cuda.is_available():
             torch.cuda.manual_seed(seed)
     system = System()
-    system.train(1000)
+    system.train(1_000_000)
