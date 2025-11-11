@@ -65,8 +65,15 @@ class ReplayMemory:
     def __init__(self, cap):
         self.mem = deque([], maxlen=cap)
 
-    def push(self, trans):
-        self.mem.append(trans)
+    def push(self, T: Transition):
+        self.mem.append(T)
+        T_ = Transition(
+            torch.flip(T.state, [0, 1]),
+            torch.tensor([[8 - T.action.item()]]),
+            T.reward.clone().detach(),
+            torch.flip(T.next_state, [0, 1]) if T.next_state is not None else None,
+        )
+        self.mem.append(T_)
 
     def sample(self, batch_size):
         return random.sample(self.mem, batch_size)
@@ -112,13 +119,11 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         self.seq = nn.Sequential(
             nn.Linear(DQN.IN, 32),
-            nn.Sigmoid(),
+            nn.ReLU(),
             nn.Linear(32, 32),
-            nn.Sigmoid(),
+            nn.ReLU(),
             nn.Linear(32, 32),
-            nn.Sigmoid(),
-            nn.Linear(32, 32),
-            nn.Sigmoid(),
+            nn.ReLU(),
             nn.Linear(32, DQN.OUT),
         )
 
@@ -133,8 +138,9 @@ class System:
     TAU = 0.005
     EPS_START = 0.9
     EPS_END = 0.1
-    EPS_DECAY = 500000
-    REPLAYMEM_SIZE = 10_000
+    EPS_DECAY = 500_000
+    REPLAYMEM_SIZE = 50_000
+    DUMP_RATE = 50_000
 
     def __init__(self):
         self.policy_net = DQN()
@@ -152,7 +158,7 @@ class System:
     def train(self, n_episodes):
         print("start")
 
-        for episode_i in range(n_episodes):
+        for episode_i in range(n_episodes + 1):
             ttt = ttt2.TTT2()
             self.first_step(ttt)
             for step_i in count():
@@ -163,7 +169,7 @@ class System:
                     print(end=".", flush=True)
                     break
 
-            if episode_i % 50000 == 0 and episode_i != 0:
+            if episode_i % self.DUMP_RATE == 0 and episode_i != 0:
                 path = f"ttt2_{episode_i}.pth"
                 torch.save(self.policy_net.state_dict(), path)
 
@@ -202,6 +208,9 @@ class System:
             self.analysis.push(T, self.eps_threshold, self.loss)
             return True
         else:
+            # TODO
+            # TODO check for careful use of TTT2.asp
+            # TODO
             _state = ttt.asp(-1).clone().detach()
             _action = self.select_action(_state, self.target_net, noeps=True)
             ttt.mov(_action, torch.tensor([-1], dtype=torch.float).unsqueeze(1))
@@ -272,6 +281,9 @@ class System:
 
         next_state_q_values = torch.zeros(self.BATCH_SIZE)
         with torch.no_grad():
+            # TODO
+            # TODO need to use TTT2.asp? we're training on these next_states but idk if we're the right player
+            # TODO
             target_net_predictions = self.target_net(non_final_next_states)
             target_net_predictions[non_final_illegal_masks] = float("-inf")
             target_net_predictions = target_net_predictions.max(1).values

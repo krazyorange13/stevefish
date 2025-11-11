@@ -31,8 +31,8 @@ def get_player_mov(ttt):
     return user
 
 
-def get_policy_mov(ttt, net):
-    X = ttt.b
+def get_policy_mov(ttt, net, policy_p):
+    X = ttt.asp(policy_p)
     y = net(X)
     _y = y
     _y[ttt.b != 0] = float("-inf")
@@ -85,7 +85,7 @@ def play(policy_net):
         ttt.mov(m, p)
 
     while True:
-        move = get_policy_mov(ttt, policy_net)
+        move = get_policy_mov(ttt, policy_net, policy_p)
         m = move
         p = torch.tensor([policy_p], dtype=torch.float).unsqueeze(1)
         ttt.mov(m, p)
