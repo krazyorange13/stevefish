@@ -3,12 +3,9 @@ import random
 from dataclasses import dataclass
 from collections import deque
 from itertools import count
-import struct
 
 import torch
 import torch.nn as nn
-
-from multiprocessing.connection import Client
 
 import ttt2
 
@@ -68,10 +65,10 @@ class ReplayMemory:
     def push(self, T: Transition):
         self.mem.append(T)
         T_ = Transition(
-            torch.flip(T.state, [0, 1]),
+            torch.flip(T.state, [1]),
             torch.tensor([[8 - T.action.item()]]),
             T.reward.clone().detach(),
-            torch.flip(T.next_state, [0, 1]) if T.next_state is not None else None,
+            torch.flip(T.next_state, [1]) if T.next_state is not None else None,
         )
         self.mem.append(T_)
 

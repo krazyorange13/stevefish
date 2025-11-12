@@ -15,15 +15,19 @@ class TTT2:
         ]
     )
 
-    def __init__(self):
-        self.b = torch.zeros([1, 9])
+    def __init__(self, ttt: "TTT2 | torch.Tensor | None" = None):
+        if isinstance(ttt, TTT2):
+            self.b = ttt.b.clone().detach()
+        elif isinstance(ttt, torch.Tensor):
+            self.b = ttt.clone().detach()
+        else:
+            self.b = torch.zeros([1, 9])
 
         # self.board is a flat 1x9 tensor
         # player 1 (X) is represented by 1
         # player 2 (O) is represented by -1
         # an empty square is represented by 0
 
-        # TODO board augmentations
         # TODO multiple boards at once (batch dim)
 
     def mov(self, m, p):
@@ -62,6 +66,26 @@ class TTT2:
     def asp(self, p):
         return self.b * p
 
-    def aug(self):
-        # TODO board augmentations
-        pass
+    def aug_reverse(self):
+        return TTT2(torch.flip(self.b, [1]))
+
+    def aug_flip_rows(self):
+        b = torch.flip(self.b.reshape([1, 3, 3]), [2]).reshape([1, 9])
+        return TTT2(b)
+
+    def aug_flip_cols(self):
+        b = torch.flip(self.b.reshape([1, 3, 3]), [1]).reshape([1, 9])
+        return TTT2(b)
+
+    def aug_transpose(self):
+        b = self.b.reshape([3, 3]).T.unsqueeze(1).reshape([1, 9])
+        return TTT2(b)
+
+    def aug_rot_90(self):
+        return self.aug_transpose().aug_flip_rows()
+
+    def aug_rot_180(self):
+        return self.aug_reverse()
+
+    def aug_rot_270(self):
+        return self.aug_transpose().aug_flip_cols()
