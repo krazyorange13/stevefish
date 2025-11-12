@@ -73,20 +73,34 @@ def print_ttt(ttt):
             print()
 
 
+def normalize_ttt(ttt: TTT2):
+    def _is_corner_x(ttt: TTT2):
+        return (
+            ttt.b[0][0] != 1 or ttt.b[0][2] != 1 or ttt.b[0][6] != 1 or ttt.b[0][8] != 1
+        )
+
+    def _is_edge_x(ttt: TTT2):
+        return (
+            ttt.b[0][1] != 1 or ttt.b[0][3] != 1 or ttt.b[0][5] != 1 or ttt.b[0][7] != 1
+        )
+
+    if _is_corner_x(ttt):
+        print("is corner", ttt.b.tolist())
+        while ttt.b[0][0] != 1:
+            print("\trot 90")
+            ttt = ttt.aug_rot_90()
+    elif _is_edge_x(ttt):
+        print("is edge", ttt.b.tolist())
+        while ttt.b[0][1] != 1:
+            print("\trot 90")
+            ttt = ttt.aug_rot_90()
+
+    return ttt
+
+
 if __name__ == "__main__":
-    ttt = get_board_from_player()
-    print_ttt(ttt)
-    print("rot 90 deg")
-    print_ttt(ttt.aug_transpose().aug_flip_rows())
-    print("rot 180 deg")
-    print_ttt(ttt.aug_reverse())
-    print("rot 270 deg")
-    print_ttt(ttt.aug_transpose().aug_flip_cols())
-    # print("reverse")
-    # print_ttt(ttt.aug_reverse())
-    # print("flip rows")
-    # print_ttt(ttt.aug_flip_rows())
-    # print("flip cols")
-    # print_ttt(ttt.aug_flip_cols())
-    # print("transpose")
-    # print_ttt(ttt.aug_transpose())
+    while True:
+        ttt = get_board_from_player()
+        print_ttt(ttt)
+        print("normalized")
+        print_ttt(normalize_ttt(ttt))
