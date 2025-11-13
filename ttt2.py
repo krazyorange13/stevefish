@@ -89,3 +89,14 @@ class TTT2:
 
     def aug_rot_270(self):
         return self.aug_transpose().aug_flip_cols()
+
+    def get_legal_moves(self):
+        return torch.nonzero(self.b == 0).flatten().tolist()
+
+    def get_next_turn(self):
+        xs = (self.b == 1).sum()
+        os = (self.b == -1).sum()
+        if os < xs:
+            return -1
+        else:
+            return 1
