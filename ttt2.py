@@ -100,3 +100,32 @@ class TTT2:
             return -1
         else:
             return 1
+
+    def done(self):
+        # NOTE: not compatible with parallel boards
+        return self.wina().any(dim=1).item() or self.drw().item()
+
+    def print(self):
+        # NOTE: not compatible with parallel boards
+        for i, n in enumerate(self.b.flatten()):
+            if int(n) == 1:
+                c = "x"
+            elif int(n) == -1:
+                c = "o"
+            else:
+                c = "."
+            print(end=c)
+            if i % 3 == 2:
+                print()
+
+    def __str__(self):
+        s = []
+        # NOTE: not compatible with parallel boards
+        for i, n in enumerate(self.b.flatten()):
+            if int(n) == 1:
+                s.append("x")
+            elif int(n) == -1:
+                s.append("o")
+            else:
+                s.append(".")
+        return "".join(s)
