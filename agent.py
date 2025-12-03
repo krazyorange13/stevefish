@@ -13,15 +13,14 @@ class Agent():
         self.board = chess.Board()
         self.model = Model().to(device)
         self.color = color
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0001, weight_decay=0.001)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0001)
         # self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
         self.criterion = nn.SmoothL1Loss()
         self.epsilon = 1.0
-        self.epsilon_decay = 0.999
+        self.epsilon_decay = 0.993
         self.epsilon_min = 0.05
-        self.discount = 0.75
+        self.discount = 0.7
 
-        self.batch_size = 32
         self.training_buffer = []
 
         self.losses = []
@@ -31,11 +30,21 @@ class Agent():
             'target_mean': []
         }
 
+        self.q_value_diversity = {
+            'predicted_std': [],
+            'target_std': [], 
+            'predicted_range': [],
+            'target_range': []
+        }
+
         self.gradient_norms = []
         self.game_results = []
+        self.opponent_types = []
 
         self.moves_per_game = []
         self.current_game_moves = 0
+
+        self.move_penalty = 1.0
 
     def printBoard(self, board):
         board = board.unicode()
@@ -51,7 +60,6 @@ class Agent():
 
         if color == chess.BLACK:
             board = board.mirror()
-
         board_tensor = torch.zeros(128, dtype=torch.float32).to(device)
 
         piece_to_value = {
@@ -86,14 +94,39 @@ class Agent():
             board_tensor[64 + square] = attacks
 
         # extra for legal moves and check status
-        # board_tensor[128+1] = board.legal_moves
-        # board_tensor[128+2] = board.is_check()
-
+        # board_tensor[128] = board.legal_moves.count()
+        # board_tensor[129] = board.is_check()
+        
         return board_tensor
     
-    def get_best_move_and_val(self):
+        # # Create 8x8x12 tensor (12 piece types: 6 for us, 6 for opponent)
+        # board_3d = torch.zeros(12, 8, 8, dtype=torch.float32)
+
+        # # Fill the 3D board representation
+        # for square in chess.SQUARES:
+        #     piece = board.piece_at(square)
+        #     if piece:
+        #         row, col = divmod(square, 8)
+        #         if color == chess.WHITE:
+        #             row = 7 - row  # Flip for white perspective
+                
+        #         piece_idx = piece_to_value[piece.piece_type]
+        #         if piece.color != color:
+        #             piece_idx += 6  # Opponent pieces in indices 6-11
+                
+        #         board_3d[piece_idx, row, col] = 1.0
+        
+        # # Flatten to 768 features (12 * 8 * 8 = 768)
+        # return board_3d.flatten().to(device)
+    
+    def get_best_move_and_val(self, board=None, color=None):
+        if board is None:
+            board = self.board
+        if color is None:
+            color = self.color
+
         # get legal moves
-        legal_moves = list(self.board.legal_moves)
+        legal_moves = list(board.legal_moves)
         if not legal_moves:
             return None, 0.0
         
@@ -103,65 +136,63 @@ class Agent():
 
             if rand < 0.4:
                 # capture any piece possilbe
-                capture_moves = [move for move in legal_moves if self.board.is_capture(move)]
+                capture_moves = [move for move in legal_moves if board.is_capture(move)]
                 if capture_moves:
                     return random.choice(capture_moves), 0.0
             elif rand < 0.8:
                 # move a piece that is under attack
                 attacked_moves = []
                 for move in legal_moves:
-                    if self.board.is_attacked_by(not self.color, move.from_square):
+                    if board.is_attacked_by(not color, move.from_square):
                         attacked_moves.append(move)
                 if attacked_moves:
                     return random.choice(attacked_moves), 0.0
                 
             return random.choice(legal_moves), 0.0
         
-        # get worst q val for each legal move for the enemy
-        best_move = None
-        worst_value = float('inf')
-        for move in legal_moves:
-            # apply move temporarily
-            self.board.push(move)
-            opp_color = not self.color
-            board_tensor = self.board_to_tensor(self.board, color=opp_color).unsqueeze(0)
-
-            with torch.no_grad():
-                value = self.model.forward(board_tensor).item()
-
-            # update best move (worst state for opponent)
-            if value < worst_value:
-                worst_value = value
-                best_move = move
-
-            # undo move
-            self.board.pop()
-
-        # # get max q val for each legal move
+        # # get worst q val for each legal move for the enemy
         # best_move = None
-        # best_value = -float('inf')
+        # worst_value = float('inf')
         # for move in legal_moves:
         #     # apply move temporarily
         #     self.board.push(move)
-        #     board_tensor = self.board_to_tensor(self.board).unsqueeze(0)
+        #     opp_color = not self.color
+        #     board_tensor = self.board_to_tensor(self.board, color=opp_color).unsqueeze(0)
 
-        #     # foward pass to get q value for each legal move
         #     with torch.no_grad():
         #         value = self.model.forward(board_tensor).item()
 
-        #     # update best move
-        #     if value > best_value:
-        #         best_value = value
+        #     # update best move (worst state for opponent)
+        #     if value < worst_value:
+        #         worst_value = value
         #         best_move = move
 
         #     # undo move
         #     self.board.pop()
 
-        # return best_move, best_value
+        # get max q val for each legal move
+        best_move = None
+        best_value = -float('inf')
+        for move in legal_moves:
+            # apply move temporarily
+            board.push(move)
+            board_tensor = self.board_to_tensor(board).unsqueeze(0)
 
-        return best_move, worst_value
-    
+            # foward pass to get q value for each legal move
+            with torch.no_grad():
+                value = self.model.forward(board_tensor).item()
 
+            # update best move
+            if value > best_value:
+                best_value = value
+                best_move = move
+
+            # undo move
+            board.pop()
+
+        return best_move, best_value
+
+        # return best_move, worst_value 
     
     def train_step(self, move, old_board, new_board, reward, value, opponent_reward=0):
         # # get tensor of old board
@@ -197,12 +228,12 @@ class Agent():
             'opponent_reward': opponent_reward
         })
 
-        if len(self.training_buffer) >= self.batch_size:
-            return self.train_batch()
+        # if len(self.training_buffer) >= self.batch_size:
+        #     return self.train_batch()
         
         return 0
     
-    def train_batch(self):
+    def train_batch(self, target_model=None):
         if len(self.training_buffer) == 0:
             return 0
         
@@ -214,18 +245,26 @@ class Agent():
             # Convert position to tensor
             old_board_state = self.board_to_tensor(sample['old_board'])
             old_states.append(old_board_state)
+
+            reward = sample['reward'] - sample['opponent_reward']
             
             # Calculate target Q-value
             with torch.no_grad():
                 if sample['new_board'].is_game_over():
-                    target_q = sample['reward'] - sample['opponent_reward']
+                    target_q = reward
                 else:
                     next_state = self.board_to_tensor(sample['new_board']).unsqueeze(0)
-                    next_max_q = self.model(next_state).item()
-                    target_q = (sample['reward'] - sample['opponent_reward']) + self.discount * next_max_q
+
+                    # Use target model if provided, otherwise use self.model
+                    if target_model is not None:
+                        next_max_q = target_model.model(next_state).item()
+                    else:
+                        next_max_q = self.model(next_state).item()
+                    
+                    target_q = reward + self.discount * next_max_q
             
             targets.append(target_q)
-            total_reward += sample['reward'] - sample['opponent_reward']
+            total_reward += reward
 
         # Convert to batch tensors
         old_states_batch = torch.stack(old_states)
@@ -234,11 +273,18 @@ class Agent():
         # Train on entire batch at once
         predicted_qs = self.model(old_states_batch)
 
-        # Track Q-value statistics
-        pred_values = predicted_qs.detach().cpu().numpy().flatten()
-        target_values = targets_batch.detach().cpu().numpy().flatten()
-        self.q_value_stats['predicted_mean'].append(pred_values.mean())
-        self.q_value_stats['target_mean'].append(target_values.mean())
+        with torch.no_grad():
+            # Track Q-value statistics
+            pred_values = predicted_qs.detach().cpu().numpy().flatten()
+            target_values = targets_batch.detach().cpu().numpy().flatten()
+            self.q_value_stats['predicted_mean'].append(pred_values.mean())
+            self.q_value_stats['target_mean'].append(target_values.mean())
+
+            self.q_value_diversity['predicted_std'].append(pred_values.std())
+            self.q_value_diversity['target_std'].append(target_values.std())
+            self.q_value_diversity['predicted_range'].append(pred_values.max() - pred_values.min())
+            self.q_value_diversity['target_range'].append(target_values.max() - target_values.min())
+    
         
         self.optimizer.zero_grad()
         loss = self.criterion(predicted_qs, targets_batch)
@@ -253,7 +299,7 @@ class Agent():
         total_norm = total_norm ** (1. / 2)
         self.gradient_norms.append(total_norm)
 
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=100.0)
         
         self.optimizer.step()
         # self.scheduler.step()
@@ -270,11 +316,6 @@ class Agent():
         self.training_buffer.clear()
         
         return total_reward
-    
-    def force_train(self):
-        if len(self.training_buffer) > 0:
-            return self.train_batch()
-        return 0
 
     def getReward(self, old_state, new_state, move, color=None):
         if color is None:
@@ -299,7 +340,7 @@ class Agent():
         elif (new_state.is_stalemate() or new_state.is_insufficient_material()
                 or new_state.can_claim_draw() or new_state.can_claim_fifty_moves()
                 or new_state.can_claim_threefold_repetition()):
-                reward -= 1
+                reward -= 5
 
         # Reward for capturing pieces
         captured_piece = old_state.piece_at(move.to_square)
@@ -308,30 +349,31 @@ class Agent():
             piece_value = piece_values.get(captured_piece.piece_type, 0)
             reward += piece_value
 
-            # # extra bonus if the captured piece was hanging (not defended)
-            # if not old_state.is_attacked_by(not color, move.to_square):
-            #     reward += piece_value * 2.0
+            # extra bonus if the captured piece was hanging (not defended)
+            if not old_state.is_attacked_by(not color, move.to_square):
+                reward += piece_value * 0.5
 
-        # # penalty for hanging its own pieces
-        # our_piece = new_state.piece_at(move.to_square)
-        # if our_piece and new_state.is_attacked_by(not color, move.to_square):
-        #     if not new_state.is_attacked_by(color, move.to_square):
-        #         reward -= piece_values.get(our_piece.piece_type, 0) * 0.8
+        # penalty for hanging its own pieces
+        our_piece = new_state.piece_at(move.to_square)
+        if our_piece and new_state.is_attacked_by(not color, move.to_square):
+            if not new_state.is_attacked_by(color, move.to_square):
+                reward -= piece_values.get(our_piece.piece_type, 0) * 0.5
     
 
         if new_state.is_check():
-            reward += 0.15
+            reward += 1
 
         if move.promotion:
-            reward += 8
+            reward += 10
         
         # smol penalty for each move to encourage faster wins (or losses)
-        reward -= 0.05
+        reward = reward * 10
 
-        return reward
+        return reward - self.move_penalty
     
-    def log_game_result(self, result):
+    def log_game_result(self, result, opponent_type):
         self.game_results.append(result)
+        self.opponent_types.append(opponent_type)
 
     def get_win_rate(self):
         if len(self.game_results) == 0:
@@ -395,7 +437,6 @@ class Agent():
             # Calculate differences
             q_differences = [abs(p - t) for p, t in zip(pred_means, target_means)]
 
-
             plt.plot(pred_means, label='Predicted Q', alpha=0.8)
             plt.plot(target_means, label='Target Q', alpha=0.8)
             plt.plot(q_differences, label='|Pred - Target|', alpha=0.8, color='red')
@@ -418,23 +459,50 @@ class Agent():
         plt.subplot(3, 3, 5)
         if len(self.game_results) > 50:
             # calculate rolling win rate over time
-            interval = 50
+            interval = 100
             half_interval = interval // 2
-            win_rates = []
+            step = 5
+
+            # win_rates = []
             game_numbers = []
-            for i in range(half_interval, len(self.game_results) - half_interval):
-                recent_games = self.game_results[i-half_interval:i+half_interval]
-                wins = recent_games.count('1-0')
-                win_rate = wins / len(recent_games)
-                win_rates.append(win_rate)
+
+            current_win_rates = []
+            older_win_rates = []
+            random_win_rates = []
+
+            for i in range(half_interval, len(self.game_results) - half_interval, step):
+                window_results = self.game_results[i-half_interval:i+half_interval]
+                window_types = self.opponent_types[i-half_interval:i+half_interval]
+
+                # Win rates by opponent type
+                for opp_type, wr_list in [
+                    ("Current Opponent", current_win_rates),
+                    ("Older Opponent", older_win_rates), 
+                    ("Random Opponent", random_win_rates)
+                ]:
+                    type_games = [res for res, typ in zip(window_results, window_types) if typ == opp_type]
+                    if len(type_games) >= 3:
+                        wins = type_games.count('1-0')
+                        wr_list.append(wins / len(type_games))
+                    else:
+                        wr_list.append(None)
+
                 game_numbers.append(i + 1)
             
-            plt.plot(game_numbers, win_rates, color='purple')
-            plt.axhline(y=0.5, color='red', linestyle='--', alpha=0.7, label='50% Win Rate')
+            # Plot lines
+            if current_win_rates:
+                plt.plot(game_numbers, current_win_rates, 'b-', label='vs Current', alpha=0.8)
+            if older_win_rates:
+                plt.plot(game_numbers, older_win_rates, 'g-', label='vs Older', alpha=0.8)
+            if random_win_rates:
+                plt.plot(game_numbers, random_win_rates, 'r-', label='vs Random', alpha=0.8)
+            
+            plt.axhline(y=0.5, color='black', linestyle='--', alpha=0.7, label='50% Win Rate')
             plt.title("Win Rate Over Time")
             plt.xlabel("Games")
             plt.ylabel("Win Rate")
             plt.ylim(0, 1)
+            plt.legend()
 
         # gradient norms
         plt.subplot(3, 3, 6)
@@ -446,7 +514,7 @@ class Agent():
             plt.axhline(y=mean_grad, color='red', linestyle='--', alpha=0.7, 
                     label=f'Mean: {mean_grad:.3f}')
 
-            plt.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, label='Clip Threshold')
+            plt.axhline(y=100.0, color='red', linestyle='--', alpha=0.7, label='Clip Threshold')
             plt.title("Gradient Norms")
             plt.xlabel("Batches")
             plt.ylabel("Gradient Norm")
@@ -465,6 +533,33 @@ class Agent():
             plt.title("Game Lengths Over Time")
             plt.xlabel("Game Number")
             plt.ylabel("Moves per Game")
+            plt.legend()
+
+        # q value diversity plot (bc we always need more diversity)
+        plt.subplot(3, 3, 8)
+        if hasattr(self, 'q_value_diversity') and len(self.q_value_diversity['predicted_std']) > 0:
+            pred_stds = self.q_value_diversity['predicted_std']
+            target_stds = self.q_value_diversity['target_std']
+            pred_ranges = self.q_value_diversity['predicted_range']
+            target_ranges = self.q_value_diversity['target_range']
+            
+            plt.plot(pred_stds, label='Predicted Std', alpha=0.8)
+            plt.plot(target_stds, label='Target Std', alpha=0.8)
+            # plt.plot(pred_ranges, label='Predicted Range', alpha=0.5, linestyle='--')
+            # plt.plot(target_ranges, label='Target Range', alpha=0.5, linestyle='--')
+            
+            # Add mean lines
+            mean_pred_std = sum(pred_stds) / len(pred_stds)
+            mean_target_std = sum(target_stds) / len(target_stds)
+            
+            plt.axhline(y=mean_pred_std, color='blue', linestyle='--', alpha=0.7, 
+                    label=f'Pred Std Mean: {mean_pred_std:.1f}')
+            plt.axhline(y=mean_target_std, color='orange', linestyle='--', alpha=0.7, 
+                    label=f'Target Std Mean: {mean_target_std:.1f}')
+            
+            plt.title("Q-Value Diversity (Standard Deviation)")
+            plt.xlabel("Batches")
+            plt.ylabel("Standard Deviation")
             plt.legend()
 
         plt.tight_layout()
@@ -556,18 +651,50 @@ class Model(nn.Module):
         super(Model, self).__init__()
         self.layers = nn.Sequential(
             nn.Linear(128, 256),
-            nn.SiLU(),
-            nn.Dropout(p=0.1),
+            nn.LeakyReLU(0.1),
             nn.Linear(256, 256),
-            nn.SiLU(),
-            nn.Dropout(p=0.1),
+            nn.LeakyReLU(0.1),
             nn.Linear(256, 128),
-            nn.SiLU(),
+            nn.LeakyReLU(0.1),
             nn.Linear(128, 64),
-            nn.SiLU(),
+            nn.LeakyReLU(0.1),
             nn.Linear(64, 1)
         )
 
+        # Input: 8x8x12 (8x8 board, 12 piece types)
+        # self.conv_layers = nn.Sequential(
+        #     # First conv layer - detect basic piece patterns
+        #     nn.Conv2d(12, 64, kernel_size=3, padding=1),  # 8x8x64
+        #     nn.LeakyReLU(0.1),
+            
+        #     # Second conv layer - detect piece interactions
+        #     nn.Conv2d(64, 128, kernel_size=3, padding=1), # 8x8x128
+        #     nn.LeakyReLU(0.1),
+            
+        #     # Third conv layer - detect larger patterns
+        #     nn.Conv2d(128, 256, kernel_size=3, padding=1), # 8x8x256
+        #     nn.LeakyReLU(0.1),
+            
+        #     # Global average pooling instead of flatten
+        #     nn.AdaptiveAvgPool2d(1)  # 1x1x256
+        # )
+        
+        # Fully connected layers for final evaluation
+        # self.fc_layers = nn.Sequential(
+        #     nn.Linear(256, 512),
+        #     nn.LeakyReLU(0.1),
+        #     nn.Linear(512, 256),
+        #     nn.LeakyReLU(0.1),
+        #     nn.Linear(256, 1)
+        # )
+
     def forward(self, x):
         return self.layers(x)
-    
+
+        # batch_size = x.shape[0]
+        # board_tensor = x.view(batch_size, 12, 8, 8)
+        
+        # conv_out = self.conv_layers(board_tensor)
+        # conv_out = conv_out.view(batch_size, -1)  # Flatten to (batch_size, 256)
+        
+        # return self.fc_layers(conv_out)
